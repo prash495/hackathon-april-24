@@ -60,7 +60,7 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 normal /= np.linalg.norm(normal)
                 # Project midpoint and midpoint+normal onto screen
                 p1 = (int(mid[0] * w), int(mid[1] * h))
-                tip = mid + normal * 0.15  # scale for visibility
+                tip = mid - normal * 0.15  # scale for visibility
                 p2 = (int(tip[0] * w), int(tip[1] * h))
                 cv2.line(frame, p1, p2, (0, 0, 255), 2)
 
