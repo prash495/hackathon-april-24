@@ -90,16 +90,24 @@ with FaceLandmarker.create_from_options(options) as landmarker:
 
                 # + is left, - is right
                 lateral = round((left - right) * 100, 3)
-                print(lateral)
                 angle = np.degrees(np.arccos(np.clip(np.dot(normal, cam_forward), -1.0, 1.0)))
-                print(f"angle: {round(angle, 3)}")
+                angle = round(180 - angle, 3)
+                print(lateral)
+                print(f"angle: {angle}")
                 
                 delta = 1.5
                 if lateral < -delta: gaze = "Looking Right"
                 elif lateral > delta: gaze = 'Looking Left'
                 else: gaze = "Looking Straight"
 
-                cv2.putText(frame, gaze, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                if angle >= 20:
+                    cheating = True
+                elif abs(lateral) > delta:
+                    cheating = True
+                else:
+                    cheating = False
+
+                cv2.putText(frame, 'Cheating' if cheating else '', (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
         cv2.imshow('Face Landmarker', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
