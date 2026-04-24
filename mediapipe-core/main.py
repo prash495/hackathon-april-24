@@ -66,10 +66,11 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 p2 = (int(tip[0] * w), int(tip[1] * h))
                 cv2.line(frame, p1, p2, (0, 0, 255), 2)
 
-                # Draw yellow vector perpendicular to camera frame (camera Z-axis = into screen)
-                # Projects as a fixed-length arrow pointing "up" in screen space from p1
-                cam_perp_tip = (p1[0], p1[1] - int(0.15 * h))
-                cv2.line(frame, p1, cam_perp_tip, (0, 255, 255), 2)
+                # Draw yellow vector pointing directly into the camera (0, 0, -1) from same origin
+                cam_forward = np.array([0.0, 0.0, -1.0])
+                cam_tip = mid + cam_forward * 0.15
+                p3 = (int(cam_tip[0] * w), int(cam_tip[1] * h))
+                cv2.line(frame, p1, p3, (0, 255, 255), 2)
 
                 # Gaze direction: compare iris center distance to inner vs outer corner
                 def iris_ratio(iris_idx, in_out_key):
@@ -90,6 +91,8 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 # + is left, - is right
                 lateral = round((left - right) * 100, 3)
                 print(lateral)
+                angle = np.degrees(np.arccos(np.clip(np.dot(normal, cam_forward), -1.0, 1.0)))
+                print(f"angle: {round(angle, 3)}")
                 
                 delta = 1.5
                 if lateral < -delta: gaze = "Looking Right"
