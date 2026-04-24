@@ -24,15 +24,21 @@ def lm_3d(lm, w=1, h=1):
     return np.array([lm.x * w, lm.y * h, lm.z])
 
 def face_normal(landmarks):
+    # Use nose, left eye, right eye — flip cross order so normal points outward
     nose  = lm_3d(landmarks[1])
     left  = lm_3d(landmarks[33])
     right = lm_3d(landmarks[263])
-    n = np.cross(left - nose, right - nose)
+    n = np.cross(right - nose, left - nose)  # outward-facing in MediaPipe coords
     return n / (np.linalg.norm(n) + 1e-6)
 
-def draw_face_normal(frame, landmarks, h, w):
+def draw_face_normal(frame, landmarks, h, w, matrix=None):
     nose = lm_3d(landmarks[1])
-    n = face_normal(landmarks)
+    if matrix is not None:
+        # Extract forward vector from rotation matrix (negated z column points out of face)
+        n = -matrix[:3, 2]
+        n = n / (np.linalg.norm(n) + 1e-6)
+    else:
+        n = face_normal(landmarks)
     scale = 0.15
     start = (int(nose[0] * w), int(nose[1] * h))
     end   = (int((nose[0] + n[0] * scale) * w),
@@ -66,6 +72,7 @@ options = FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=model_path),
     running_mode=VisionRunningMode.LIVE_STREAM,
     output_face_blendshapes=True,
+    output_facial_transformation_matrixes=True,
     result_callback=store_result)
 
 cap = cv2.VideoCapture(0)
@@ -81,12 +88,14 @@ with FaceLandmarker.create_from_options(options) as landmarker:
 
         if latest_result:
             h, w = frame.shape[:2]
-            for face in latest_result.face_landmarks:
+            matrices = latest_result.facial_transformation_matrixes or []
+            for i, face in enumerate(latest_result.face_landmarks):
                 # Dots
                 for lm in face:
                     cv2.circle(frame, lm_px(lm, w, h), 1, (0, 200, 0), -1)
                 # Overlays
-                draw_face_normal(frame, face, h, w)
+                matrix = matrices[i] if i < len(matrices) else None
+                draw_face_normal(frame, face, h, w, matrix)
                 draw_gaze_lines(frame, face, h, w)
 
         cv2.imshow('Face Landmarker', frame)
