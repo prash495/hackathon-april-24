@@ -4,8 +4,8 @@ import numpy as np
 import time
 
 definitions = {
-    'lip-top': [0],
-    'lip-bottom':[17],
+    # 'lip-top': [0],
+    # 'lip-bottom':[17],
     'left-eye-quad': [474, 475, 476, 477],
     'left-eye-in-and-out': [463, 263],
     'right-eye-quad': [469, 470, 471, 472],
@@ -46,12 +46,6 @@ with FaceLandmarker.create_from_options(options) as landmarker:
         if latest_result:
             h, w = frame.shape[:2]
             for face in latest_result.face_landmarks:
-                for mainkey in definitions:
-                    for pt_index in definitions[mainkey]:
-                        lm = face[pt_index]
-                        cx, cy = int(lm.x * w), int(lm.y * h)
-                        cv2.circle(frame, (cx, cy), 1, (0, 255, 0), 3)
-                        print(lm)
 
                 # Draw normal to face-bounds plane
                 fb = [face[i] for i in definitions['face-bounds']]
@@ -64,13 +58,25 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 p1 = (int(mid[0] * w), int(mid[1] * h))
                 tip = mid - normal * 0.15  # scale for visibility
                 p2 = (int(tip[0] * w), int(tip[1] * h))
-                cv2.line(frame, p1, p2, (0, 0, 255), 2)
 
                 # Draw yellow vector pointing directly into the camera (0, 0, -1) from same origin
                 cam_forward = np.array([0.0, 0.0, -1.0])
                 cam_tip = mid + cam_forward * 0.15
                 p3 = (int(cam_tip[0] * w), int(cam_tip[1] * h))
-                cv2.line(frame, p1, p3, (0, 255, 255), 2)
+
+
+                # uncomment below for displaying points
+                # for lm in face:
+                #     cx, cy = int(lm.x * w), int(lm.y * h)
+                #     cv2.circle(frame, (cx, cy), 1, (0, 255, 0), -1)
+                # for mainkey in definitions:
+                #     for pt_index in definitions[mainkey]:
+                #         lm = face[pt_index]
+                #         cx, cy = int(lm.x * w), int(lm.y * h)
+                #         cv2.circle(frame, (cx, cy), 1, (0, 255, 255), 2)
+                #         print(lm)
+                # cv2.line(frame, p1, p2, (0, 0, 255), 2)
+                # cv2.line(frame, p1, p3, (0, 255, 255), 2)
 
                 # Gaze direction: compare iris center distance to inner vs outer corner
                 def iris_ratio(iris_idx, in_out_key):
