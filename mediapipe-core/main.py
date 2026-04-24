@@ -72,8 +72,12 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                     enorm = np.cross(ev1, ev2)
                     enorm /= np.linalg.norm(enorm)
                     ep1 = (int(emid[0] * w), int(emid[1] * h))
-                    etip = emid - enorm * 0.08
-                    ep2 = (int(etip[0] * w), int(etip[1] * h))
+                    # project normal to screen and draw fixed 60px line
+                    dx, dy = enorm[0] * w, enorm[1] * h
+                    length = np.hypot(dx, dy)
+                    if length > 0:
+                        dx, dy = dx / length * 60, dy / length * 60
+                    ep2 = (int(ep1[0] - dx), int(ep1[1] - dy))
                     cv2.line(frame, ep1, ep2, (255, 0, 0), 2)
 
                 # for lm in face:
