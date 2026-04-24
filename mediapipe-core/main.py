@@ -2,6 +2,14 @@ import cv2
 import mediapipe as mp
 import time
 
+definitions = {
+    'lip-top': [0],
+    'lip-bottom':[17],
+    'left-eye-quad': [474, 475, 476, 477],
+    'right-eye-quad': [469, 470, 471, 472],
+    'face-bounds': [54, 284, 176, 400, 58, 288]
+}
+
 model_path = 'mediapipe-core/face_landmarker_v2_with_blendshapes.task'
 
 BaseOptions = mp.tasks.BaseOptions
@@ -35,9 +43,16 @@ with FaceLandmarker.create_from_options(options) as landmarker:
         if latest_result:
             h, w = frame.shape[:2]
             for face in latest_result.face_landmarks:
-                for lm in face:
-                    cx, cy = int(lm.x * w), int(lm.y * h)
-                    cv2.circle(frame, (cx, cy), 1, (0, 255, 0), -1)
+                for mainkey in definitions:
+                    for pt_index in definitions[mainkey]:
+                        lm = face[pt_index]
+                        cx, cy = int(lm.x * w), int(lm.y * h)
+                        cv2.circle(frame, (cx, cy), 1, (0, 255, 0), 3)
+                        print(lm)
+
+                # for lm in face:
+                #     cx, cy = int(lm.x * w), int(lm.y * h)
+                #     cv2.circle(frame, (cx, cy), 1, (0, 255, 0), -1)
 
         cv2.imshow('Face Landmarker', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
