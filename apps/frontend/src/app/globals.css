@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Web-safe font stack ─────────────────────────────────── */
+:root {
+  --font-sans: Georgia, 'Times New Roman', Times, serif;
+  --font-ui:   -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --font-mono: 'Courier New', Courier, monospace;
+}
+
+/* ─── Base reset ──────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html { font-size: 17px; }          /* bump base from 16 → 17 */
+
+body {
+  background: #ffffff;
+  color: #111111;
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
+}
+
+/* ─── Typography scale ────────────────────────────────────── */
+h1, h2, h3, h4 {
+  font-family: var(--font-sans);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  color: #0a0a0a;
+}
+
+p, li, label, input, textarea, button, a {
+  font-family: var(--font-ui);
+}
+
+code, pre, .font-mono {
+  font-family: var(--font-mono);
+}
+
+/* ─── Button base — always tappable ──────────────────────── */
+button, [role="button"] {
+  cursor: pointer;
+  min-height: 44px;          /* WCAG touch target */
+  min-width: 44px;
+}
+
+/* ─── Focus ring ──────────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid #0a0a0a;
+  outline-offset: 3px;
+}
+
+/* ─── Corner mark decoration ─────────────────────────────── */
+.cm {
+  position: absolute;
+  font-size: 11px;
+  color: #d1d5db;
+  line-height: 1;
+  user-select: none;
+  pointer-events: none;
+}
+.cm-tl { top: -1px;  left: -1px;  }
+.cm-tr { top: -1px;  right: -1px; }
+.cm-bl { bottom: -1px; left: -1px;  }
+.cm-br { bottom: -1px; right: -1px; }
+
+/* ─── Smooth transitions ──────────────────────────────────── */
+a, button { transition: color 150ms, background-color 150ms, border-color 150ms, opacity 150ms; }
