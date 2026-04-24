@@ -20,30 +20,47 @@ def store_result(result: FaceLandmarkerResult, output_image: mp.Image, timestamp
 def lm_px(lm, w, h):
     return (int(lm.x * w), int(lm.y * h))
 
-def lm_3d(lm):
-    return np.array([lm.x, lm.y, lm.z])
+def lm_3d(lm, w=1, h=1):
+    return np.array([lm.x * w, lm.y * h, lm.z])
 
-def draw_face_normal(frame, landmarks, h, w):
+def face_normal(landmarks):
     nose  = lm_3d(landmarks[1])
     left  = lm_3d(landmarks[33])
     right = lm_3d(landmarks[263])
-    normal = np.cross(left - nose, right - nose)
-    normal /= np.linalg.norm(normal) + 1e-6
+    n = np.cross(left - nose, right - nose)
+    return n / (np.linalg.norm(n) + 1e-6)
+
+def draw_face_normal(frame, landmarks, h, w):
+    nose = lm_3d(landmarks[1])
+    n = face_normal(landmarks)
     scale = 0.15
-    start = lm_px(landmarks[1], w, h)
-    end = (int((nose[0] + normal[0] * scale) * w),
-           int((nose[1] + normal[1] * scale) * h))
+    start = (int(nose[0] * w), int(nose[1] * h))
+    end   = (int((nose[0] + n[0] * scale) * w),
+             int((nose[1] + n[1] * scale) * h))
     cv2.arrowedLine(frame, start, end, (255, 0, 0), 2, tipLength=0.3)
 
 def draw_gaze_lines(frame, landmarks, h, w):
-    for eye_a, eye_b, iris_idx in [(33, 133, 468), (362, 263, 473)]:
-        a, b = lm_3d(landmarks[eye_a]), lm_3d(landmarks[eye_b])
-        mid_px = (int(((a[0] + b[0]) / 2) * w), int(((a[1] + b[1]) / 2) * h))
-        iris = lm_px(landmarks[iris_idx], w, h)
-        dx, dy = iris[0] - mid_px[0], iris[1] - mid_px[1]
-        scale = 5
-        end = (mid_px[0] + dx * scale, mid_px[1] + dy * scale)
-        cv2.arrowedLine(frame, mid_px, end, (0, 255, 0), 2, tipLength=0.3)
+    # For each eye: project iris offset onto the face plane, then draw
+    n = face_normal(landmarks)
+    for inner, outer, top, bot, iris_idx in [
+        (133, 33,  159, 145, 468),   # left eye
+        (362, 263, 386, 374, 473),   # right eye
+    ]:
+        # Eye center in 3D (normalized coords)
+        eye_pts = [lm_3d(landmarks[i]) for i in [inner, outer, top, bot]]
+        eye_center = np.mean(eye_pts, axis=0)
+
+        iris = lm_3d(landmarks[iris_idx])
+        offset = iris - eye_center
+
+        # Remove component along face normal (keep in-plane offset)
+        offset_in_plane = offset - np.dot(offset, n) * n
+
+        scale = 80  # pixels
+        start_px = (int(eye_center[0] * w), int(eye_center[1] * h))
+        end_px   = (int(eye_center[0] * w + offset_in_plane[0] * scale * w),
+                    int(eye_center[1] * h + offset_in_plane[1] * scale * h))
+        cv2.arrowedLine(frame, start_px, end_px, (0, 255, 0), 2, tipLength=0.4)
 
 options = FaceLandmarkerOptions(
     base_options=BaseOptions(model_asset_path=model_path),
@@ -65,6 +82,10 @@ with FaceLandmarker.create_from_options(options) as landmarker:
         if latest_result:
             h, w = frame.shape[:2]
             for face in latest_result.face_landmarks:
+                # Dots
+                for lm in face:
+                    cv2.circle(frame, lm_px(lm, w, h), 1, (0, 200, 0), -1)
+                # Overlays
                 draw_face_normal(frame, face, h, w)
                 draw_gaze_lines(frame, face, h, w)
 
