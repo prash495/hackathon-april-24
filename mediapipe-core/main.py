@@ -82,14 +82,15 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 left = iris_ratio(473, 'left-eye-in-and-out')
                 right = iris_ratio(468, 'right-eye-in-and-out')
 
-                print((abs(left) + abs(right)) / 2)
-                delta = 0
-                if left < delta and right > delta:
-                    gaze = "Looking Right"
-                elif left > delta and right < delta:
-                    gaze = "Looking Left"
-                else:
-                    gaze = "Looking Straight"
+                # + is left, - is right
+                lateral = round((left - right) * 100, 3)
+                print(lateral)
+                
+                delta = 1.5
+                if lateral < -delta: gaze = "Looking Right"
+                elif lateral > delta: gaze = 'Looking Left'
+                else: gaze = "Looking Straight"
+
                 cv2.putText(frame, gaze, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
 
         cv2.imshow('Face Landmarker', frame)
