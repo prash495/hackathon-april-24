@@ -58,27 +58,11 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 v1, v2 = pts[1] - pts[0], pts[2] - pts[0]
                 normal = np.cross(v1, v2)
                 normal /= np.linalg.norm(normal)
+                # Project midpoint and midpoint+normal onto screen
                 p1 = (int(mid[0] * w), int(mid[1] * h))
-                tip = mid - normal * 0.15
+                tip = mid - normal * 0.15  # scale for visibility
                 p2 = (int(tip[0] * w), int(tip[1] * h))
                 cv2.line(frame, p1, p2, (0, 0, 255), 2)
-
-                # Draw normals for eye quads
-                for eye_key in ('left-eye-quad', 'right-eye-quad'):
-                    eq = [face[i] for i in definitions[eye_key]]
-                    epts = np.array([[lm.x, lm.y, lm.z] for lm in eq])
-                    emid = epts.mean(axis=0)
-                    ev1, ev2 = epts[1] - epts[0], epts[2] - epts[0]
-                    enorm = np.cross(ev1, ev2)
-                    enorm /= np.linalg.norm(enorm)
-                    ep1 = (int(emid[0] * w), int(emid[1] * h))
-                    # project normal to screen and draw fixed 60px line
-                    dx, dy = enorm[0] * w, enorm[1] * h
-                    length = np.hypot(dx, dy)
-                    if length > 0:
-                        dx, dy = dx / length * 60, dy / length * 60
-                    ep2 = (int(ep1[0] - dx), int(ep1[1] - dy))
-                    cv2.line(frame, ep1, ep2, (255, 0, 0), 2)
 
                 # for lm in face:
                 #     cx, cy = int(lm.x * w), int(lm.y * h)
