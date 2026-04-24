@@ -66,9 +66,25 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 p2 = (int(tip[0] * w), int(tip[1] * h))
                 cv2.line(frame, p1, p2, (0, 0, 255), 2)
 
-                # for lm in face:
-                #     cx, cy = int(lm.x * w), int(lm.y * h)
-                #     cv2.circle(frame, (cx, cy), 1, (0, 255, 0), -1)
+                # Gaze direction: compare iris center distance to inner vs outer corner
+                def iris_ratio(iris_idx, in_out_key):
+                    iris = face[iris_idx]
+                    inner = face[definitions[in_out_key][0]]
+                    outer = face[definitions[in_out_key][1]]
+                    d_inner = np.hypot(iris.x - inner.x, iris.y - inner.y)
+                    d_outer = np.hypot(iris.x - outer.x, iris.y - outer.y)
+                    # ratio < 0.5 means closer to inner corner
+                    return d_inner / (d_inner + d_outer)
+
+                # Left eye (user's left): inner=463, outer=263, iris=473
+                # Right eye (user's right): inner=133, outer=33, iris=468
+                # Closer to inner corner → looking toward nose → looking right (user's right)
+                left_ratio = iris_ratio(473, 'left-eye-in-and-out')
+                right_ratio = iris_ratio(468, 'right-eye-in-and-out')
+                avg_ratio = (left_ratio + right_ratio) / 2
+                gaze = "Looking LEFT" if avg_ratio > 0.5 else "Looking RIGHT"
+                print(gaze)
+                cv2.putText(frame, gaze, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
 
         cv2.imshow('Face Landmarker', frame)
         if cv2.waitKey(1) & 0xFF == ord('q'):
