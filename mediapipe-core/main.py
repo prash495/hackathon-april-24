@@ -66,6 +66,11 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 p2 = (int(tip[0] * w), int(tip[1] * h))
                 cv2.line(frame, p1, p2, (0, 0, 255), 2)
 
+                # Draw yellow vector perpendicular to camera frame (camera Z-axis = into screen)
+                # Projects as a fixed-length arrow pointing "up" in screen space from p1
+                cam_perp_tip = (p1[0], p1[1] - int(0.15 * h))
+                cv2.line(frame, p1, cam_perp_tip, (0, 255, 255), 2)
+
                 # Gaze direction: compare iris center distance to inner vs outer corner
                 def iris_ratio(iris_idx, in_out_key):
                     iris = face[iris_idx]
