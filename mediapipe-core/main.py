@@ -1,5 +1,6 @@
 import cv2
 import mediapipe as mp
+import numpy as np
 import time
 
 definitions = {
@@ -7,7 +8,7 @@ definitions = {
     'lip-bottom':[17],
     'left-eye-quad': [474, 475, 476, 477],
     'right-eye-quad': [469, 470, 471, 472],
-    'face-bounds': [54, 284, 176, 400, 58, 288]
+    'face-bounds': [54, 284, 152]
 }
 
 model_path = 'mediapipe-core/face_landmarker_v2_with_blendshapes.task'
@@ -49,6 +50,19 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                         cx, cy = int(lm.x * w), int(lm.y * h)
                         cv2.circle(frame, (cx, cy), 1, (0, 255, 0), 3)
                         print(lm)
+
+                # Draw normal to face-bounds plane
+                fb = [face[i] for i in definitions['face-bounds']]
+                pts = np.array([[lm.x, lm.y, lm.z] for lm in fb])
+                mid = pts.mean(axis=0)
+                v1, v2 = pts[1] - pts[0], pts[2] - pts[0]
+                normal = np.cross(v1, v2)
+                normal /= np.linalg.norm(normal)
+                # Project midpoint and midpoint+normal onto screen
+                p1 = (int(mid[0] * w), int(mid[1] * h))
+                tip = mid + normal * 0.15  # scale for visibility
+                p2 = (int(tip[0] * w), int(tip[1] * h))
+                cv2.line(frame, p1, p2, (0, 0, 255), 2)
 
                 # for lm in face:
                 #     cx, cy = int(lm.x * w), int(lm.y * h)
