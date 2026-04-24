@@ -7,8 +7,10 @@ definitions = {
     'lip-top': [0],
     'lip-bottom':[17],
     'left-eye-quad': [474, 475, 476, 477],
+    'left-eye-in-and-out': [463, 263],
     'right-eye-quad': [469, 470, 471, 472],
-    'face-bounds': [54, 284, 152]
+    'right-eye-in-and-out': [133, 33],
+    'face-bounds': [54, 284, 152],
 }
 
 model_path = 'mediapipe-core/face_landmarker_v2_with_blendshapes.task'
