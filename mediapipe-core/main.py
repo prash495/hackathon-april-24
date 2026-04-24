@@ -74,16 +74,22 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                     d_inner = np.hypot(iris.x - inner.x, iris.y - inner.y)
                     d_outer = np.hypot(iris.x - outer.x, iris.y - outer.y)
                     # ratio < 0.5 means closer to inner corner
-                    return d_inner / (d_inner + d_outer)
+                    return d_inner - d_outer
 
                 # Left eye (user's left): inner=463, outer=263, iris=473
                 # Right eye (user's right): inner=133, outer=33, iris=468
                 # Closer to inner corner → looking toward nose → looking right (user's right)
-                left_ratio = iris_ratio(473, 'left-eye-in-and-out')
-                right_ratio = iris_ratio(468, 'right-eye-in-and-out')
-                avg_ratio = (left_ratio + right_ratio) / 2
-                gaze = "Looking LEFT" if avg_ratio > 0.5 else "Looking RIGHT"
-                print(gaze)
+                left = iris_ratio(473, 'left-eye-in-and-out')
+                right = iris_ratio(468, 'right-eye-in-and-out')
+
+                print((abs(left) + abs(right)) / 2)
+                delta = 0
+                if left < delta and right > delta:
+                    gaze = "Looking Right"
+                elif left > delta and right < delta:
+                    gaze = "Looking Left"
+                else:
+                    gaze = "Looking Straight"
                 cv2.putText(frame, gaze, (30, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
 
         cv2.imshow('Face Landmarker', frame)
