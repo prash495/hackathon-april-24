@@ -68,7 +68,7 @@ with FaceLandmarker.create_from_options(options) as landmarker:
                 # uncomment below for displaying points
                 # for lm in face:
                 #     cx, cy = int(lm.x * w), int(lm.y * h)
-                #     cv2.circle(frame, (cx, cy), 1, (0, 255, 0), -1)
+                #     cv2.circle(frame, (cx, cy), 1, (255, 255, 255), -1)
                 # for mainkey in definitions:
                 #     for pt_index in definitions[mainkey]:
                 #         lm = face[pt_index]
