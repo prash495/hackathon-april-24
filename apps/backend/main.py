@@ -195,11 +195,15 @@ BLOCKED_INTENTS = {"solve_entire_problem", "write_complete_solution", "optimize_
 
 def analyze_prompt_intent(prompt: str) -> str:
     p = prompt.lower()
-    if any(x in p for x in ["solve this", "complete solution", "write the code", "give me the answer", "full implementation"]):
+    if any(x in p for x in ["solve this", "complete solution", "write the code", "give me the answer", "full implementation", "solve it", "do it for me"]):
         return "solve_entire_problem"
-    if any(x in p for x in ["syntax for", "how do i", "what's the api", "import statement", "function signature"]):
+    if any(x in p for x in ["syntax for", "how do i", "what's the api", "import statement", "function signature",
+                              "syntax", "how to", "what does", "error", "bug", "print", "loop", "list", "array",
+                              "string", "dictionary", "map", "sort", "function", "class", "method", "variable",
+                              "type", "return", "parameter", "argument", "index", "slice", "format", "convert"]):
         return "syntax_lookup"
-    if any(x in p for x in ["explain", "how does", "what is", "when should"]):
+    if any(x in p for x in ["explain", "how does", "what is", "when should", "why", "difference between",
+                              "compare", "concept", "algorithm", "approach", "strategy", "trade-off"]):
         return "conceptual_question"
     return "unknown"
 
@@ -209,7 +213,7 @@ def ethics_logic_gate(prompt: str, assistance_level: int) -> dict:
         raise PolicyViolation("Full-solution requests are prohibited during interviews.")
     if assistance_level == 0:
         return {"allowed": False, "violation": "AI assistance is disabled for this session."}
-    if assistance_level == 1 and intent not in ("syntax_lookup",):
+    if assistance_level == 1 and intent not in ("syntax_lookup", "unknown"):
         return {"allowed": False, "violation": f"Only syntax questions allowed at this level. Detected: {intent}"}
     return {"allowed": True, "intent": intent}
 

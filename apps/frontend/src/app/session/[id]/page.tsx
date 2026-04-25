@@ -5,10 +5,10 @@ import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 import dynamic from 'next/dynamic'
+import ProctoringOverlay from '@/components/ProctoringOverlay'
 import type { ProctoringOverlayHandle } from '@/components/ProctoringOverlay'
 
 const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false })
-const ProctoringOverlay = dynamic(() => import('@/components/ProctoringOverlay'), { ssr: false })
 
 type Message = { role: 'user' | 'assistant'; content: string; allowed?: boolean }
 
