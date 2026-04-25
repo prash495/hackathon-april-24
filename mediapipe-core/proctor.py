@@ -106,7 +106,7 @@ class MJPEGHandler(BaseHTTPRequestHandler):
         pass  # suppress logs
 
 def start_stream_server():
-    server = HTTPServer(("0.0.0.0", STREAM_PORT), MJPEGHandler)
+    server = HTTPServer(("127.0.0.1", STREAM_PORT), MJPEGHandler)
     server.serve_forever()
 
 # ── Event logging ────────────────────────────────────────────
