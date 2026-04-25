@@ -214,13 +214,10 @@ def main():
             _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             set_frame(jpeg.tobytes())
 
-            # Still show local window (optional, can remove for headless)
-            cv2.imshow('Proctor - Face Monitor', frame)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
+            # Control frame rate (~30fps)
+            time.sleep(0.033)
 
     cap.release()
-    cv2.destroyAllWindows()
     print(f"[PROCTOR] Stopped for session={SESSION_ID}", flush=True)
 
 if __name__ == "__main__":

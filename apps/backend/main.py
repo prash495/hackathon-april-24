@@ -35,7 +35,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,6 +98,26 @@ def stop_proctor(session_id: str):
     if entry:
         proc, _ = entry
         if proc.poll() is None:
+            is_wsl = "microsoft" in os.uname().release.lower() if hasattr(os, "uname") else False
+            if is_wsl:
+                # Kill the entire Windows process tree spawned by powershell
+                try:
+                    # Get the Windows PID and kill the tree
+                    subprocess.run(
+                        ["powershell.exe", "-Command", f"Stop-Process -Id {proc.pid} -Force -ErrorAction SilentlyContinue"],
+                        timeout=5, capture_output=True,
+                    )
+                except Exception:
+                    pass
+                # Also kill any python.exe running proctor.py
+                try:
+                    subprocess.run(
+                        ["powershell.exe", "-Command",
+                         "Get-Process python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like '*proctor.py*'} | Stop-Process -Force"],
+                        timeout=5, capture_output=True,
+                    )
+                except Exception:
+                    pass
             proc.terminate()
             try: proc.wait(timeout=5)
             except subprocess.TimeoutExpired: proc.kill()
@@ -351,7 +371,7 @@ async def proctor_status(session_id: str, current_user: User = Depends(get_curre
         running = False
         port = None
     return {"session_id": session_id, "proctor_running": running,
-        "stream_port": port if running else None}
+        "stream_url": f"/sessions/{session_id}/stream" if running else None}
 
 @app.get("/sessions/{session_id}/proctor-events")
 async def get_proctor_events(session_id: str, current_user: User = Depends(get_current_user)):
@@ -367,11 +387,30 @@ async def proxy_proctor_stream(session_id: str):
     proc, port = entry
     if proc.poll() is not None:
         raise HTTPException(status_code=404, detail="Proctor stopped")
+    proctor_host = "127.0.0.1"
+    # On WSL, proctor runs on Windows — need Windows host IP
+    is_wsl = "microsoft" in os.uname().release.lower() if hasattr(os, "uname") else False
+    if is_wsl:
+        try:
+            # WSL2: the Windows host is reachable via the default gateway
+            import re
+            with open("/proc/net/route") as f:
+                for line in f:
+                    fields = line.strip().split()
+                    if fields[1] == "00000000":  # default route
+                        hex_ip = fields[2]
+                        proctor_host = ".".join(str(int(hex_ip[i:i+2], 16)) for i in (6, 4, 2, 0))
+                        break
+        except Exception:
+            proctor_host = "127.0.0.1"
     async def generate():
         async with httpx.AsyncClient() as client:
-            async with client.stream("GET", f"http://localhost:{port}/stream", timeout=None) as resp:
-                async for chunk in resp.aiter_bytes(chunk_size=4096):
-                    yield chunk
+            try:
+                async with client.stream("GET", f"http://{proctor_host}:{port}/stream", timeout=None) as resp:
+                    async for chunk in resp.aiter_bytes(chunk_size=4096):
+                        yield chunk
+            except httpx.ConnectError:
+                yield b""
     return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame",
         headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
 
