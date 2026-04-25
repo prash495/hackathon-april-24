@@ -12,7 +12,7 @@ const ProctoringOverlay = forwardRef<ProctoringOverlayHandle, { sessionId: strin
     useImperativeHandle(ref, () => ({ stop }), [stop])
 
     return (
-      <div className="flex flex-col border-b border-gray-200">
+      <div className="fixed top-16 right-4 z-50 flex flex-col gap-0 shadow-lg" style={{ width: 160 }}>
         <div
           className={`text-xs px-2 py-1 font-medium flex items-center gap-1.5 ${
             status === 'error'
@@ -25,7 +25,7 @@ const ProctoringOverlay = forwardRef<ProctoringOverlayHandle, { sessionId: strin
           <span className={`w-1.5 h-1.5 rounded-full ${status === 'error' ? 'bg-yellow-200' : cheating ? 'bg-red-200 animate-pulse' : 'bg-green-200'}`} />
           {status === 'error' ? (error ?? 'Camera error') : cheating ? 'Cheating detected' : 'Proctored'}
         </div>
-        <div className="relative bg-black overflow-hidden" style={{ height: 120 }}>
+        <div className="relative bg-black overflow-hidden" style={{ height: 90 }}>
           <video
             ref={videoRef}
             muted

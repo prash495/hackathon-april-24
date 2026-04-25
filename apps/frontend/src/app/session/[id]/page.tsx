@@ -43,7 +43,6 @@ export default function SessionPage() {
   const [sessionStarted, setSessionStarted] = useState(false)
   const [joining, setJoining] = useState(false)
   const [activeTab, setActiveTab] = useState<'output' | 'input'>('output')
-  const [showSubmitConfirm, setShowSubmitConfirm] = useState(false)
   const proctorRef = useRef<ProctoringOverlayHandle>(null)
 
   useEffect(() => {
@@ -156,8 +155,8 @@ export default function SessionPage() {
       <div className="h-[calc(100vh-56px)] flex items-center justify-center bg-white">
         <div className="text-center max-w-md px-6">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-4">Session Complete</p>
-          <h1 className="text-3xl font-semibold mb-4">Solution submitted</h1>
-          <p className="text-sm text-gray-500">Your code has been submitted to the interviewer. Thank you!</p>
+          <h1 className="text-3xl font-semibold mb-4">Interview ended</h1>
+          <p className="text-sm text-gray-500">Your submission has been recorded. Thank you!</p>
         </div>
       </div>
     )
@@ -165,7 +164,10 @@ export default function SessionPage() {
 
   // Active session
   return (
-    <div className="h-[calc(100vh-56px)] flex bg-white text-black overflow-hidden">      {/* Left: Problem */}
+    <div className="h-[calc(100vh-56px)] flex bg-white text-black overflow-hidden">
+      {sessionStarted && <ProctoringOverlay ref={proctorRef} sessionId={sessionId} />}
+
+      {/* Left: Problem */}
       <div className="w-64 border-r border-gray-200 flex flex-col overflow-hidden">
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <p className="text-xs uppercase tracking-widest text-gray-400">Problem</p>
@@ -205,7 +207,7 @@ export default function SessionPage() {
             className="text-xs bg-green-600 text-white px-4 py-1.5 hover:bg-green-700 transition-colors disabled:opacity-50 font-medium">
             {running ? '⏳ Running...' : '▶ Run Code'}
           </button>
-          <button onClick={() => setShowSubmitConfirm(true)}
+          <button onClick={endSession}
             className="text-xs bg-black text-white px-4 py-1.5 hover:bg-gray-800 transition-colors font-medium">
             Submit
           </button>
@@ -263,7 +265,6 @@ export default function SessionPage() {
 
       {/* Right: AI Chat */}
       <div className="w-72 flex flex-col">
-        {sessionStarted && <ProctoringOverlay ref={proctorRef} sessionId={sessionId} />}
         <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
           <p className="text-xs uppercase tracking-widest text-gray-400">AI Assistant</p>
           <span className="text-xs text-gray-300 border border-gray-200 px-2 py-0.5">
@@ -311,32 +312,6 @@ export default function SessionPage() {
           </button>
         </div>
       </div>
-
-      {/* Submit confirmation modal */}
-      {showSubmitConfirm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white p-8 max-w-sm w-full mx-4 shadow-xl">
-            <h2 className="text-lg font-semibold mb-2">Submit your solution?</h2>
-            <p className="text-sm text-gray-500 mb-6">
-              This will end the interview and send your code to the interviewer. You won&apos;t be able to make further changes.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={() => { setShowSubmitConfirm(false); endSession() }}
-                className="flex-1 bg-black text-white py-2.5 text-sm font-medium hover:bg-gray-800 transition-colors"
-              >
-                Yes, submit
-              </button>
-              <button
-                onClick={() => setShowSubmitConfirm(false)}
-                className="flex-1 border border-gray-200 py-2.5 text-sm text-gray-600 hover:bg-gray-50 transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   )
