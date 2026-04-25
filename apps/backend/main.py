@@ -1,24 +1,23 @@
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import os
 import logging
 import subprocess
-import threading
 import tempfile
 import shutil
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 import bcrypt
-import httpx
 import anthropic
 from supabase import create_client, Client
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+if os.path.exists(_env_path):
+    load_dotenv(dotenv_path=_env_path)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -91,82 +90,6 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
-
-# ── Proctor subprocess manager ───────────────────────────────
-_proctor_processes: dict[str, tuple[subprocess.Popen, int]] = {}
-_next_stream_port = 9100
-
-PROCTOR_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "..", "..", "mediapipe-core", "proctor.py"
-)
-
-def _get_proctor_cmd(session_id: str, candidate_id: str, stream_port: int) -> list[str]:
-    script = os.path.abspath(PROCTOR_SCRIPT)
-    is_wsl = "microsoft" in os.uname().release.lower() if hasattr(os, "uname") else False
-    if is_wsl:
-        win_script = subprocess.check_output(["wslpath", "-w", script], text=True).strip()
-        win_project = subprocess.check_output(
-            ["wslpath", "-w", os.path.abspath(os.path.join(os.path.dirname(script), ".."))], text=True
-        ).strip()
-        win_venv_python = win_project + "\\.venv\\Scripts\\python.exe"
-        return [
-            "powershell.exe", "-Command",
-            f"cd '{win_project}'; & '{win_venv_python}' '{win_script}' {session_id} {SUPABASE_URL} {SUPABASE_KEY} {candidate_id} {stream_port}",
-        ]
-    else:
-        return ["uv", "run", "python", script, session_id, SUPABASE_URL, SUPABASE_KEY, candidate_id, str(stream_port)]
-
-def start_proctor(session_id: str, candidate_id: str) -> int:
-    global _next_stream_port
-    if session_id in _proctor_processes:
-        proc, port = _proctor_processes[session_id]
-        if proc.poll() is None:
-            return port
-    stream_port = _next_stream_port
-    _next_stream_port += 1
-    cmd = _get_proctor_cmd(session_id, candidate_id, stream_port)
-    print(f"[BACKEND] Launching proctor cmd: {cmd}", flush=True)
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    _proctor_processes[session_id] = (proc, stream_port)
-    print(f"[BACKEND] Proctor started session={session_id} pid={proc.pid} port={stream_port}", flush=True)
-    def _check():
-        import time; time.sleep(3)
-        if proc.poll() is not None:
-            stderr = proc.stderr.read().decode() if proc.stderr else ""
-            print(f"[BACKEND] Proctor DIED session={session_id} exit={proc.returncode}", flush=True)
-            if stderr: print(f"[BACKEND] stderr: {stderr[:500]}", flush=True)
-    threading.Thread(target=_check, daemon=True).start()
-    return stream_port
-
-def stop_proctor(session_id: str):
-    entry = _proctor_processes.pop(session_id, None)
-    if entry:
-        proc, _ = entry
-        if proc.poll() is None:
-            is_wsl = "microsoft" in os.uname().release.lower() if hasattr(os, "uname") else False
-            if is_wsl:
-                # Kill the entire Windows process tree spawned by powershell
-                try:
-                    # Get the Windows PID and kill the tree
-                    subprocess.run(
-                        ["powershell.exe", "-Command", f"Stop-Process -Id {proc.pid} -Force -ErrorAction SilentlyContinue"],
-                        timeout=5, capture_output=True,
-                    )
-                except Exception:
-                    pass
-                # Also kill any python.exe running proctor.py
-                try:
-                    subprocess.run(
-                        ["powershell.exe", "-Command",
-                         "Get-Process python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like '*proctor.py*'} | Stop-Process -Force"],
-                        timeout=5, capture_output=True,
-                    )
-                except Exception:
-                    pass
-            proc.terminate()
-            try: proc.wait(timeout=5)
-            except subprocess.TimeoutExpired: proc.kill()
-        print(f"[BACKEND] Proctor stopped session={session_id}")
 
 # ── Models ───────────────────────────────────────────────────
 class User(BaseModel):
@@ -391,33 +314,18 @@ async def start_session(session_id: str, current_user: User = Depends(get_curren
     res = supabase.table("interview_sessions").select("*").eq("id", session_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Session not found")
-    d = res.data[0]
-    candidate_id = str(d["candidate_id"]) if d.get("candidate_id") else current_user.id
     supabase.table("interview_sessions").update({
         "status": "active", "started_at": datetime.utcnow().isoformat(),
     }).eq("id", session_id).execute()
-    stream_port = start_proctor(session_id, candidate_id)
-    return {"status": "active", "session_id": session_id, "proctor": "started", "stream_port": stream_port}
+    # Proctoring handled by mediapipe-core service — frontend connects via WebSocket
+    return {"status": "active", "session_id": session_id}
 
 @app.post("/sessions/{session_id}/stop")
 async def stop_session(session_id: str, current_user: User = Depends(get_current_user)):
-    stop_proctor(session_id)
     supabase.table("interview_sessions").update({
         "status": "completed", "ended_at": datetime.utcnow().isoformat(),
     }).eq("id", session_id).execute()
-    return {"status": "completed", "session_id": session_id, "proctor": "stopped"}
-
-@app.get("/sessions/{session_id}/proctor-status")
-async def proctor_status(session_id: str, current_user: User = Depends(get_current_user)):
-    entry = _proctor_processes.get(session_id)
-    if entry:
-        proc, port = entry
-        running = proc.poll() is None
-    else:
-        running = False
-        port = None
-    return {"session_id": session_id, "proctor_running": running,
-        "stream_url": f"/sessions/{session_id}/stream" if running else None}
+    return {"status": "completed", "session_id": session_id}
 
 @app.get("/sessions/{session_id}/proctor-events")
 async def get_proctor_events(session_id: str, current_user: User = Depends(get_current_user)):
@@ -442,42 +350,6 @@ async def create_proctor_event(session_id: str, body: ProctorEventRequest, curre
         logger.error("Failed to persist proctor event for session %s: %s", session_id, e)
         raise
     return {"ok": True}
-
-@app.get("/sessions/{session_id}/stream")
-async def proxy_proctor_stream(session_id: str):
-    """Proxy the MJPEG stream from the proctor subprocess."""
-    entry = _proctor_processes.get(session_id)
-    if not entry:
-        raise HTTPException(status_code=404, detail="No proctor running")
-    proc, port = entry
-    if proc.poll() is not None:
-        raise HTTPException(status_code=404, detail="Proctor stopped")
-    proctor_host = "127.0.0.1"
-    # On WSL, proctor runs on Windows — need Windows host IP
-    is_wsl = "microsoft" in os.uname().release.lower() if hasattr(os, "uname") else False
-    if is_wsl:
-        try:
-            # WSL2: the Windows host is reachable via the default gateway
-            import re
-            with open("/proc/net/route") as f:
-                for line in f:
-                    fields = line.strip().split()
-                    if fields[1] == "00000000":  # default route
-                        hex_ip = fields[2]
-                        proctor_host = ".".join(str(int(hex_ip[i:i+2], 16)) for i in (6, 4, 2, 0))
-                        break
-        except Exception:
-            proctor_host = "127.0.0.1"
-    async def generate():
-        async with httpx.AsyncClient() as client:
-            try:
-                async with client.stream("GET", f"http://{proctor_host}:{port}/stream", timeout=None) as resp:
-                    async for chunk in resp.aiter_bytes(chunk_size=4096):
-                        yield chunk
-            except httpx.ConnectError:
-                yield b""
-    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame",
-        headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
 
 # ── Routes: AI prompt + ethics gate ──────────────────────────
 @app.post("/ai/prompt", response_model=AIPromptResponse)
@@ -565,11 +437,6 @@ async def run_code(req: CodeRunRequest, current_user: User = Depends(get_current
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 # ── Entrypoint ───────────────────────────────────────────────
-@app.on_event("shutdown")
-def cleanup_proctors():
-    for sid in list(_proctor_processes.keys()):
-        stop_proctor(sid)
-
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8000, log_config=None)

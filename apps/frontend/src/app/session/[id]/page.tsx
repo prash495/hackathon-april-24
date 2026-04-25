@@ -154,7 +154,7 @@ export default function SessionPage() {
   // Active session
   return (
     <div className="h-[calc(100vh-56px)] flex bg-white text-black overflow-hidden">
-      <ProctoringOverlay ref={proctorRef} sessionId={sessionId} />
+      {sessionStarted && <ProctoringOverlay ref={proctorRef} sessionId={sessionId} />}
 
       {/* Left: Problem */}
       <div className="w-64 border-r border-gray-200 flex flex-col overflow-hidden">

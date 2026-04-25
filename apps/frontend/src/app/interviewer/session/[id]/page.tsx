@@ -45,7 +45,6 @@ export default function InterviewerSessionView() {
   const [copied, setCopied] = useState(false)
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
-  const [streamUrl, setStreamUrl] = useState<string | null>(null)
 
   const candidateLink = typeof window !== 'undefined'
     ? `${window.location.origin}/session/${sessionId}`
@@ -56,16 +55,14 @@ export default function InterviewerSessionView() {
     if (!user) return
     const poll = async () => {
       try {
-        const [sessRes, promptRes, eventsRes, proctorRes] = await Promise.all([
+        const [sessRes, promptRes, eventsRes] = await Promise.all([
           api.get(`/sessions/${sessionId}`),
           api.get(`/sessions/${sessionId}/prompts`),
           api.get(`/sessions/${sessionId}/proctor-events`),
-          api.get(`/sessions/${sessionId}/proctor-status`),
         ])
         setSession(sessRes.data)
         setPrompts(promptRes.data)
         setProctorEvents(eventsRes.data)
-        if (proctorRes.data.stream_url) setStreamUrl(proctorRes.data.stream_url)
       } catch {}
     }
     poll()
@@ -84,7 +81,6 @@ export default function InterviewerSessionView() {
     try {
       const { data } = await api.post(`/sessions/${sessionId}/start`)
       setSession(s => s ? { ...s, status: 'active' } : s)
-      if (data.stream_url) setStreamUrl(data.stream_url)
     } catch (e) { console.error(e) }
     finally { setStarting(false) }
   }
@@ -182,27 +178,26 @@ export default function InterviewerSessionView() {
         </div>
 
         <div className="grid md:grid-cols-2 gap-8">
-          {/* Video Feed */}
+          {/* Proctoring Status */}
           <div className="md:col-span-2 mb-4">
-            <p className="text-xs uppercase tracking-widest text-gray-400 mb-4">Candidate Camera Feed</p>
-            <div className="border border-gray-200 relative bg-gray-900 overflow-hidden" style={{ maxHeight: 400 }}>
-              {streamUrl && session?.status === 'active' ? (
-                <img
-                  src={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8001'}/sessions/${sessionId}/stream`}
-                  alt="Proctor camera feed"
-                  className="w-full h-auto object-contain"
-                  style={{ maxHeight: 400 }}
-                />
-              ) : (
-                <div className="flex items-center justify-center py-20">
-                  <p className="text-gray-500 text-sm">
-                    {session?.status === 'pending'
-                      ? 'Camera will activate when session starts'
-                      : session?.status === 'completed'
-                      ? 'Session ended'
-                      : 'Waiting for camera feed...'}
+            <p className="text-xs uppercase tracking-widest text-gray-400 mb-4">Proctoring Status</p>
+            <div className="border border-gray-200 px-6 py-8 flex items-center justify-center">
+              {session?.status === 'active' ? (
+                <div className="text-center">
+                  <span className="inline-flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 px-4 py-2 mb-2">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                    Proctoring active — candidate camera is being analyzed server-side
+                  </span>
+                  <p className="text-xs text-gray-400 mt-2">
+                    Cheating events will appear in the Proctor Events panel below in real time
                   </p>
                 </div>
+              ) : (
+                <p className="text-gray-400 text-sm">
+                  {session?.status === 'pending'
+                    ? 'Proctoring will start when the candidate joins'
+                    : 'Session ended'}
+                </p>
               )}
             </div>
           </div>

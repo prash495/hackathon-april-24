@@ -1,126 +1,166 @@
 """
-Proctoring camera process — launched as a subprocess by the backend.
-Usage: python proctor.py <session_id> <supabase_url> <supabase_key> <candidate_id> [stream_port]
+Proctoring WebSocket server — receives JPEG frames from the frontend,
+runs MediaPipe face/gaze detection server-side, returns analysis results,
+and logs proctor_events to Supabase.
 
-Captures webcam, runs MediaPipe face/gaze detection, logs proctor_events
-to Supabase, and serves an MJPEG video stream on stream_port (default 9100).
+Usage:
+    uv run python mediapipe-core/proctor.py
+
+Env vars (reads from apps/backend/.env):
+    SUPABASE_URL, SUPABASE_SERVICE_KEY (or SUPABASE_KEY)
 """
 
-import sys
 import os
-import cv2
-import mediapipe as mp
-import numpy as np
+import sys
 import time
 import json
-import threading
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import asyncio
+import numpy as np
+import cv2
+import mediapipe as mp
+from contextlib import asynccontextmanager
 
-# ── Args ─────────────────────────────────────────────────────
-if len(sys.argv) < 5:
-    print("Usage: python proctor.py <session_id> <supabase_url> <supabase_key> <candidate_id> [stream_port]")
-    sys.exit(1)
+from dotenv import load_dotenv
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 
-SESSION_ID = sys.argv[1]
-SUPABASE_URL = sys.argv[2]
-SUPABASE_KEY = sys.argv[3]
-CANDIDATE_ID = sys.argv[4]
-STREAM_PORT = int(sys.argv[5]) if len(sys.argv) > 5 else 9100
+# ── Load env from backend .env (local dev) or environment (production) ──
+_backend_env = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "..", "apps", "backend", ".env")
+if os.path.exists(_backend_env):
+    load_dotenv(dotenv_path=_backend_env)
 
-from supabase import create_client
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+from supabase import create_client, Client
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_KEY must be set")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ── MediaPipe setup ──────────────────────────────────────────
-definitions = {
-    'left-eye-quad': [474, 475, 476, 477],
-    'left-eye-in-and-out': [463, 263],
-    'right-eye-quad': [469, 470, 471, 472],
-    'right-eye-in-and-out': [133, 33],
-    'face-bounds': [54, 284, 152],
-}
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-model_path = os.path.join(SCRIPT_DIR, 'face_landmarker_v2_with_blendshapes.task')
+MODEL_PATH = os.path.join(SCRIPT_DIR, "face_landmarker_v2_with_blendshapes.task")
+
+DEFINITIONS = {
+    "left-eye-quad": [474, 475, 476, 477],
+    "left-eye-in-and-out": [463, 263],
+    "right-eye-quad": [469, 470, 471, 472],
+    "right-eye-in-and-out": [133, 33],
+    "face-bounds": [54, 284, 152],
+}
+DELTA = 1.5
+ANGLE_THRESHOLD = 20
+EVENT_COOLDOWN = 5  # seconds
+
 
 BaseOptions = mp.tasks.BaseOptions
 FaceLandmarker = mp.tasks.vision.FaceLandmarker
 FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
-FaceLandmarkerResult = mp.tasks.vision.FaceLandmarkerResult
 VisionRunningMode = mp.tasks.vision.RunningMode
 
-latest_result = None
-
-def store_result(result: FaceLandmarkerResult, output_image: mp.Image, timestamp_ms: int):
-    global latest_result
-    latest_result = result
-
-options = FaceLandmarkerOptions(
-    base_options=BaseOptions(model_asset_path=model_path),
-    running_mode=VisionRunningMode.LIVE_STREAM,
-    result_callback=store_result,
+# Use IMAGE mode since we process individual frames (not a live stream)
+_options = FaceLandmarkerOptions(
+    base_options=BaseOptions(model_asset_path=MODEL_PATH),
+    running_mode=VisionRunningMode.IMAGE,
+    num_faces=2,
 )
 
-# ── Shared frame buffer for MJPEG streaming ──────────────────
-_latest_jpeg: bytes = b""
-_frame_lock = threading.Lock()
+_landmarker: FaceLandmarker | None = None
 
-def set_frame(jpeg_bytes: bytes):
-    global _latest_jpeg
-    with _frame_lock:
-        _latest_jpeg = jpeg_bytes
 
-def get_frame() -> bytes:
-    with _frame_lock:
-        return _latest_jpeg
+def get_landmarker() -> FaceLandmarker:
+    global _landmarker
+    if _landmarker is None:
+        _landmarker = FaceLandmarker.create_from_options(_options)
+    return _landmarker
 
-# ── MJPEG HTTP server ────────────────────────────────────────
-class MJPEGHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/stream":
-            self.send_response(200)
-            self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            try:
-                while True:
-                    frame = get_frame()
-                    if frame:
-                        self.wfile.write(b"--frame\r\n")
-                        self.wfile.write(b"Content-Type: image/jpeg\r\n\r\n")
-                        self.wfile.write(frame)
-                        self.wfile.write(b"\r\n")
-                    time.sleep(0.05)  # ~20fps
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-        elif self.path == "/health":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Access-Control-Allow-Origin", "*")
-            self.end_headers()
-            self.wfile.write(json.dumps({"status": "running", "session_id": SESSION_ID}).encode())
-        else:
-            self.send_response(404)
-            self.end_headers()
 
-    def log_message(self, format, *args):
-        pass  # suppress logs
+# ── Frame analysis ───────────────────────────────────────────
+def iris_ratio(face, iris_idx: int, in_out_key: str) -> float:
+    inner = face[DEFINITIONS[in_out_key][0]]
+    outer = face[DEFINITIONS[in_out_key][1]]
+    iris = face[iris_idx]
+    d_inner = np.hypot(iris.x - inner.x, iris.y - inner.y)
+    d_outer = np.hypot(iris.x - outer.x, iris.y - outer.y)
+    return d_inner - d_outer
 
-def start_stream_server():
-    server = HTTPServer(("127.0.0.1", STREAM_PORT), MJPEGHandler)
-    server.serve_forever()
 
-# ── Event logging ────────────────────────────────────────────
-EVENT_COOLDOWN = 5
-_last_event_time: dict[str, float] = {}
+def analyze_frame(jpeg_bytes: bytes) -> dict:
+    """Decode a JPEG frame, run MediaPipe, return analysis dict."""
+    arr = np.frombuffer(jpeg_bytes, dtype=np.uint8)
+    frame = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if frame is None:
+        return {"error": "invalid_frame"}
 
-def log_event(event_type: str, severity: str = "medium", metadata: dict | None = None):
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+    result = get_landmarker().detect(mp_image)
+
+    faces = result.face_landmarks
+    num_faces = len(faces) if faces else 0
+
+    if num_faces == 0:
+        return {"cheating": False, "gaze": "none", "event": "face_absent",
+                "severity": "high", "num_faces": 0}
+
+    if num_faces > 1:
+        return {"cheating": True, "gaze": "none", "event": "multiple_faces",
+                "severity": "high", "num_faces": num_faces}
+
+    face = faces[0]
+
+    # Face normal angle
+    fb = [face[i] for i in DEFINITIONS["face-bounds"]]
+    pts = np.array([[lm.x, lm.y, lm.z] for lm in fb])
+    v1, v2 = pts[1] - pts[0], pts[2] - pts[0]
+    normal = np.cross(v1, v2)
+    normal /= np.linalg.norm(normal)
+    cam_forward = np.array([0.0, 0.0, -1.0])
+    angle = float(np.degrees(np.arccos(np.clip(np.dot(normal, cam_forward), -1.0, 1.0))))
+    angle = round(180 - angle, 3)
+
+    # Gaze via iris ratio
+    left = iris_ratio(face, 473, "left-eye-in-and-out")
+    right = iris_ratio(face, 468, "right-eye-in-and-out")
+    lateral = round((left - right) * 100, 3)
+
+    if lateral < -DELTA:
+        gaze = "Looking Right"
+    elif lateral > DELTA:
+        gaze = "Looking Left"
+    else:
+        gaze = "Looking Straight"
+
+    cheating = bool(angle >= ANGLE_THRESHOLD or abs(lateral) > DELTA)
+
+    resp: dict = {
+        "cheating": cheating,
+        "gaze": gaze,
+        "angle": float(angle),
+        "lateral": float(lateral),
+        "num_faces": 1,
+    }
+    if cheating:
+        resp["event"] = "gaze_away"
+        resp["severity"] = "medium"
+    return resp
+
+
+# ── Event logging (with cooldown per session+event_type) ─────
+_last_event: dict[str, float] = {}
+
+
+def log_event(session_id: str, event_type: str, severity: str, metadata: dict | None = None):
+    key = f"{session_id}:{event_type}"
     now = time.time()
-    if now - _last_event_time.get(event_type, 0) < EVENT_COOLDOWN:
+    if now - _last_event.get(key, 0) < EVENT_COOLDOWN:
         return
-    _last_event_time[event_type] = now
+    _last_event[key] = now
     try:
         supabase.table("proctor_events").insert({
-            "session_id": SESSION_ID,
+            "session_id": session_id,
             "event_type": event_type,
             "severity": severity,
             "metadata": json.dumps(metadata or {}),
@@ -128,97 +168,72 @@ def log_event(event_type: str, severity: str = "medium", metadata: dict | None =
     except Exception as e:
         print(f"[PROCTOR] Failed to log event: {e}", file=sys.stderr)
 
-# ── Main loop ────────────────────────────────────────────────
-def main():
-    # Start MJPEG stream server in background thread
-    stream_thread = threading.Thread(target=start_stream_server, daemon=True)
-    stream_thread.start()
-    print(f"[PROCTOR] MJPEG stream on http://localhost:{STREAM_PORT}/stream", flush=True)
 
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("[PROCTOR] Cannot open camera", file=sys.stderr)
-        sys.exit(1)
+# ── FastAPI app ──────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Warm up the model on startup
+    print("[PROCTOR] Loading MediaPipe model...", flush=True)
+    get_landmarker()
+    print("[PROCTOR] Model ready.", flush=True)
+    yield
+    global _landmarker
+    if _landmarker:
+        _landmarker.close()
+        _landmarker = None
+    print("[PROCTOR] Shut down.", flush=True)
 
-    print(f"[PROCTOR] Started for session={SESSION_ID}", flush=True)
 
-    with FaceLandmarker.create_from_options(options) as landmarker:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
+app = FastAPI(title="Proctor Service", lifespan=lifespan)
 
-            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame)
-            landmarker.detect_async(mp_image, int(time.time() * 1000))
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-            if latest_result:
-                h, w = frame.shape[:2]
-                num_faces = len(latest_result.face_landmarks)
 
-                if num_faces == 0:
-                    log_event("face_absent", "high")
-                    cv2.putText(frame, "No Face Detected", (30, 40),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+@app.get("/health")
+def health():
+    return {"status": "running", "service": "proctor"}
 
-                elif num_faces > 1:
-                    log_event("multiple_faces", "high", {"count": num_faces})
-                    cv2.putText(frame, f"Multiple Faces: {num_faces}", (30, 40),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
-                else:
-                    face = latest_result.face_landmarks[0]
+@app.websocket("/ws/{session_id}")
+async def proctor_ws(websocket: WebSocket, session_id: str):
+    """
+    Frontend connects here and sends JPEG frames as binary messages.
+    Server responds with JSON analysis for each frame.
+    """
+    await websocket.accept()
+    print(f"[PROCTOR] WS connected session={session_id}", flush=True)
 
-                    # Draw face mesh
-                    for lm in face:
-                        cx, cy = int(lm.x * w), int(lm.y * h)
-                        cv2.circle(frame, (cx, cy), 1, (200, 200, 200), -1)
+    try:
+        while True:
+            # Receive JPEG bytes from frontend
+            data = await websocket.receive_bytes()
 
-                    # Face normal angle
-                    fb = [face[i] for i in definitions['face-bounds']]
-                    pts = np.array([[lm.x, lm.y, lm.z] for lm in fb])
-                    v1, v2 = pts[1] - pts[0], pts[2] - pts[0]
-                    normal = np.cross(v1, v2)
-                    normal /= np.linalg.norm(normal)
-                    cam_forward = np.array([0.0, 0.0, -1.0])
-                    angle = np.degrees(np.arccos(np.clip(np.dot(normal, cam_forward), -1.0, 1.0)))
-                    angle = round(180 - angle, 3)
+            # Run analysis in a thread to avoid blocking the event loop
+            result = await asyncio.to_thread(analyze_frame, data)
 
-                    def iris_ratio(iris_idx, in_out_key):
-                        iris = face[iris_idx]
-                        inner = face[definitions[in_out_key][0]]
-                        outer = face[definitions[in_out_key][1]]
-                        d_inner = np.hypot(iris.x - inner.x, iris.y - inner.y)
-                        d_outer = np.hypot(iris.x - outer.x, iris.y - outer.y)
-                        return d_inner - d_outer
+            # Log events to Supabase if needed
+            event_type = result.get("event")
+            if event_type:
+                severity = result.get("severity", "medium")
+                meta = {k: v for k, v in result.items()
+                        if k not in ("event", "severity", "error")}
+                await asyncio.to_thread(log_event, session_id, event_type, severity, meta)
 
-                    left = iris_ratio(473, 'left-eye-in-and-out')
-                    right = iris_ratio(468, 'right-eye-in-and-out')
-                    lateral = round((left - right) * 100, 3)
+            # Send result back to frontend
+            await websocket.send_json(result)
 
-                    delta = 1.5
-                    if lateral < -delta: gaze = "Looking Right"
-                    elif lateral > delta: gaze = "Looking Left"
-                    else: gaze = "Looking Straight"
+    except WebSocketDisconnect:
+        print(f"[PROCTOR] WS disconnected session={session_id}", flush=True)
+    except Exception as e:
+        print(f"[PROCTOR] WS error session={session_id}: {e}", flush=True)
 
-                    cheating = angle >= 20 or abs(lateral) > delta
-
-                    if cheating:
-                        log_event("gaze_away", "medium", {"angle": angle, "lateral": lateral, "gaze": gaze})
-                        cv2.putText(frame, f"Cheating - {gaze}", (30, 40),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-                    else:
-                        cv2.putText(frame, "OK", (30, 40),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-            # Encode frame as JPEG and push to stream buffer
-            _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-            set_frame(jpeg.tobytes())
-
-            # Control frame rate (~30fps)
-            time.sleep(0.033)
-
-    cap.release()
-    print(f"[PROCTOR] Stopped for session={SESSION_ID}", flush=True)
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8002)
