@@ -103,7 +103,7 @@ export default function SessionPage() {
     setLoading(true)
     setChat(c => [...c, { role: 'user', content: userMsg }])
     try {
-      const { data } = await api.post('/ai/prompt', { prompt: userMsg, session_id: sessionId })
+      const { data } = await api.post('/ai/prompt', { prompt: userMsg, session_id: sessionId, code })
       setChat(c => [...c, {
         role: 'assistant',
         content: data.allowed ? data.response : data.violation,

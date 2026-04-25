@@ -14,6 +14,7 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 import bcrypt
 import httpx
+import anthropic
 from supabase import create_client, Client
 
 load_dotenv()
@@ -25,6 +26,46 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_KEY (or SUPABASE_SERVICE_KEY) must be set")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ── Anthropic client ─────────────────────────────────────────
+_anthropic = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_KEY"))
+
+SYSTEM_PROMPTS = {
+    1: (
+        "You are a syntax-only coding assistant during a technical interview. "
+        "You may ONLY answer questions about syntax: show short code snippets demonstrating language syntax, "
+        "built-in functions, or standard library usage. "
+        "You must NEVER explain algorithms, suggest problem-solving approaches, discuss logic, "
+        "or help with the candidate's specific problem. "
+        "If the question is not purely about syntax, respond: 'I can only help with syntax questions at this level.'"
+    ),
+    2: (
+        "You are a conceptual coding assistant during a technical interview. "
+        "You may explain concepts, data structures, algorithms in general terms, and suggest high-level approaches. "
+        "You must NEVER write or complete the candidate's solution, provide the full algorithm for their specific problem, "
+        "or give step-by-step implementation instructions that solve the problem directly. "
+        "Give hints and conceptual guidance only."
+    ),
+    3: (
+        "You are a helpful coding assistant during a technical interview. "
+        "Answer the candidate's questions fully and helpfully. "
+        "You may explain concepts, suggest approaches, review code, and provide examples."
+    ),
+}
+
+def call_claude(prompt: str, code: str, level: int) -> str:
+    system = SYSTEM_PROMPTS[level]
+    user_content = prompt
+    if code and code.strip():
+        user_content = f"My current code:\n```\n{code}\n```\n\n{prompt}"
+    msg = _anthropic.messages.create(
+        # model="claude-3-5-haiku-latest",
+        model = "claude-haiku-4-5-20251001",
+        max_tokens=512,
+        system=system,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    return msg.content[0].text
 
 # ── App setup ────────────────────────────────────────────────
 app = FastAPI(
@@ -153,6 +194,7 @@ class Session(BaseModel):
 class AIPromptRequest(BaseModel):
     prompt: str
     session_id: str
+    code: Optional[str] = None
 
 class AIPromptResponse(BaseModel):
     response: str
@@ -420,13 +462,26 @@ async def process_ai_prompt(request: AIPromptRequest, current_user: User = Depen
     try:
         sess_res = supabase.table("interview_sessions").select("assistance_level").eq("id", request.session_id).execute()
         assistance_level = sess_res.data[0]["assistance_level"] if sess_res.data else 1
+
+        # Level 0: disabled — log and return blocked immediately
+        if assistance_level == 0:
+            supabase.table("prompt_logs").insert({
+                "session_id": request.session_id, "candidate_id": current_user.id,
+                "prompt_text": request.prompt, "response_text": None,
+                "intent": "blocked_level_0", "was_blocked": True,
+                "violation_reason": "AI assistance is disabled for this session.",
+            }).execute()
+            return AIPromptResponse(response="", allowed=False, violation="AI assistance is disabled for this session.")
+
         gate_result = ethics_logic_gate(request.prompt, assistance_level)
         intent = gate_result.get("intent", "unknown")
         was_blocked = not gate_result["allowed"]
         violation = gate_result.get("violation")
+
         response_text = ""
         if gate_result["allowed"]:
-            response_text = f"Mock AI response for: {request.prompt}"
+            response_text = call_claude(request.prompt, request.code or "", assistance_level)
+
         supabase.table("prompt_logs").insert({
             "session_id": request.session_id, "candidate_id": current_user.id,
             "prompt_text": request.prompt, "response_text": response_text or None,
