@@ -120,6 +120,11 @@ class Session(BaseModel):
     assistance_level: Optional[int] = 1
     max_prompts: Optional[int] = 20
     started_at: Optional[str] = None
+    ended_at: Optional[str] = None
+    candidate_code: Optional[str] = None
+    challenge_title: Optional[str] = None
+    challenge_difficulty: Optional[str] = None
+    challenge_language: Optional[str] = None
 
 class AIPromptRequest(BaseModel):
     prompt: str
@@ -325,11 +330,38 @@ async def start_session(session_id: str, current_user: User = Depends(get_curren
     # Proctoring handled by mediapipe-core service — frontend connects via WebSocket
     return {"status": "active", "session_id": session_id}
 
+@app.get("/sessions", response_model=List[Session])
+async def list_sessions(current_user: User = Depends(get_current_user)):
+    res = supabase.table("interview_sessions").select(
+        "id, challenge_id, candidate_id, interviewer_id, status, assistance_level, max_prompts, started_at, ended_at, candidate_code, challenges(title, difficulty, language)"
+    ).eq("interviewer_id", current_user.id).order("created_at", desc=True).execute()
+    return [
+        Session(
+            id=str(d["id"]),
+            challenge_id=str(d["challenge_id"]) if d.get("challenge_id") else None,
+            candidate_id=str(d["candidate_id"]) if d.get("candidate_id") else None,
+            interviewer_id=str(d["interviewer_id"]),
+            status=d["status"],
+            assistance_level=d["assistance_level"],
+            max_prompts=d["max_prompts"],
+            started_at=d.get("started_at"),
+            ended_at=d.get("ended_at"),
+            candidate_code=d.get("candidate_code"),
+            challenge_title=d["challenges"]["title"] if d.get("challenges") else None,
+            challenge_difficulty=d["challenges"]["difficulty"] if d.get("challenges") else None,
+            challenge_language=d["challenges"]["language"] if d.get("challenges") else None,
+        )
+        for d in (res.data or [])
+    ]
+
 @app.post("/sessions/{session_id}/stop")
 async def stop_session(session_id: str, current_user: User = Depends(get_current_user)):
-    supabase.table("interview_sessions").update({
-        "status": "completed", "ended_at": datetime.utcnow().isoformat(),
-    }).eq("id", session_id).execute()
+    # Persist the final live code snapshot into the DB before clearing memory
+    final_code = _live_code.get(session_id, {}).get("code")
+    update_payload: dict = {"status": "completed", "ended_at": datetime.utcnow().isoformat()}
+    if final_code:
+        update_payload["candidate_code"] = final_code
+    supabase.table("interview_sessions").update(update_payload).eq("id", session_id).execute()
     _live_code.pop(session_id, None)
     return {"status": "completed", "session_id": session_id}
 

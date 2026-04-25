@@ -34,6 +34,14 @@ export default function Navbar() {
             >
               Dashboard
             </Link>
+            {user.role === 'interviewer' && (
+              <Link
+                href="/interviewer/history"
+                className="hidden md:block text-base text-gray-500 hover:text-black font-medium"
+              >
+                History
+              </Link>
+            )}
             <span className="hidden md:inline text-sm text-gray-400 border border-gray-200 px-2.5 py-1 capitalize">
               {user.role}
             </span>
