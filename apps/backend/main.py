@@ -17,7 +17,7 @@ import httpx
 import anthropic
 from supabase import create_client, Client
 
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 
 # ── Supabase client ─────────────────────────────────────────
 SUPABASE_URL = os.getenv("SUPABASE_URL")
