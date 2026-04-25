@@ -5,6 +5,9 @@ WORKDIR /app
 # OpenCV headless needs these system libs, wget for model download
 RUN apt-get update && apt-get install -y libgl1 libglib2.0-0 wget && rm -rf /var/lib/apt/lists/*
 
+# Pin httpx first to prevent gotrue/supabase from pulling incompatible version
+RUN pip install --no-cache-dir httpx==0.27.0
+
 COPY mediapipe-core/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
