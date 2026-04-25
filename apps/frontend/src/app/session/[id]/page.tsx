@@ -7,6 +7,7 @@ import { getToken } from '@/lib/auth'
 import dynamic from 'next/dynamic'
 
 const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false })
+const ProctoringOverlay = dynamic(() => import('@/components/ProctoringOverlay'), { ssr: false })
 
 type Message = { role: 'user' | 'assistant'; content: string; allowed?: boolean }
 
@@ -150,6 +151,7 @@ export default function SessionPage() {
   // Active session
   return (
     <div className="h-[calc(100vh-56px)] flex bg-white text-black overflow-hidden">
+      <ProctoringOverlay sessionId={sessionId} />
 
       {/* Left: Problem */}
       <div className="w-64 border-r border-gray-200 flex flex-col overflow-hidden">

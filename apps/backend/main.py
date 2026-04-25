@@ -420,6 +420,21 @@ async def get_proctor_events(session_id: str, current_user: User = Depends(get_c
     res = supabase.table("proctor_events").select("*").eq("session_id", session_id).order("occurred_at").execute()
     return res.data or []
 
+class ProctorEventRequest(BaseModel):
+    event_type: str
+    severity: str = "medium"
+    metadata: Optional[str] = None
+
+@app.post("/sessions/{session_id}/proctor-events", status_code=201)
+async def create_proctor_event(session_id: str, body: ProctorEventRequest, current_user: User = Depends(get_current_user)):
+    supabase.table("proctor_events").insert({
+        "session_id": session_id,
+        "event_type": body.event_type,
+        "severity": body.severity,
+        "metadata": body.metadata or "{}",
+    }).execute()
+    return {"ok": True}
+
 @app.get("/sessions/{session_id}/stream")
 async def proxy_proctor_stream(session_id: str):
     """Proxy the MJPEG stream from the proctor subprocess."""
