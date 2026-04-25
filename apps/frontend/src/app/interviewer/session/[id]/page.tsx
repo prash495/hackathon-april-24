@@ -6,6 +6,9 @@ import Link from 'next/link'
 import { api } from '@/lib/api'
 import { useRequireAuth } from '@/hooks/useRequireAuth'
 import Button from '@/components/ui/Button'
+import dynamic from 'next/dynamic'
+
+const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false })
 
 type Prompt = {
   id: string
@@ -45,6 +48,8 @@ export default function InterviewerSessionView() {
   const [copied, setCopied] = useState(false)
   const [starting, setStarting] = useState(false)
   const [stopping, setStopping] = useState(false)
+  const [liveCode, setLiveCode] = useState('')
+  const [liveLang, setLiveLang] = useState('python')
 
   const candidateLink = typeof window !== 'undefined'
     ? `${window.location.origin}/session/${sessionId}`
@@ -55,18 +60,23 @@ export default function InterviewerSessionView() {
     if (!user) return
     const poll = async () => {
       try {
-        const [sessRes, promptRes, eventsRes] = await Promise.all([
+        const [sessRes, promptRes, eventsRes, codeRes] = await Promise.all([
           api.get(`/sessions/${sessionId}`),
           api.get(`/sessions/${sessionId}/prompts`),
           api.get(`/sessions/${sessionId}/proctor-events`),
+          api.get(`/sessions/${sessionId}/code`),
         ])
         setSession(sessRes.data)
         setPrompts(promptRes.data)
         setProctorEvents(eventsRes.data)
+        if (codeRes.data.code) {
+          setLiveCode(codeRes.data.code)
+          setLiveLang(codeRes.data.language || 'python')
+        }
       } catch {}
     }
     poll()
-    const interval = setInterval(poll, 3000)
+    const interval = setInterval(poll, 2000)
     return () => clearInterval(interval)
   }, [sessionId, user])
 
@@ -200,6 +210,43 @@ export default function InterviewerSessionView() {
                 </p>
               )}
             </div>
+          </div>
+        </div>
+
+        {/* Live Code Viewer */}
+        <div className="mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <p className="text-xs uppercase tracking-widest text-gray-400">Candidate&apos;s Code (Live)</p>
+            {liveCode && (
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                <span className="text-xs text-gray-400">{liveLang}</span>
+              </span>
+            )}
+          </div>
+          <div className="border border-gray-200" style={{ height: 350 }}>
+            {liveCode ? (
+              <Editor
+                height="100%"
+                language={liveLang}
+                theme="light"
+                value={liveCode}
+                options={{
+                  readOnly: true,
+                  minimap: { enabled: false },
+                  fontSize: 13,
+                  lineNumbers: 'on',
+                  scrollBeyondLastLine: false,
+                  padding: { top: 12 },
+                  fontFamily: 'JetBrains Mono, Menlo, monospace',
+                  domReadOnly: true,
+                }}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-gray-300 text-sm">Waiting for candidate to start coding...</p>
+              </div>
+            )}
           </div>
         </div>
 

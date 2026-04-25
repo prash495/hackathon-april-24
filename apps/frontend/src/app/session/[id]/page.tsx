@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { getToken } from '@/lib/auth'
@@ -54,6 +54,17 @@ export default function SessionPage() {
       })
       .catch(() => {})
   }, [sessionId])
+
+  // Debounced live code sync to backend (every 1s)
+  const syncTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!sessionStarted) return
+    if (syncTimer.current) clearTimeout(syncTimer.current)
+    syncTimer.current = setTimeout(() => {
+      api.put(`/sessions/${sessionId}/code`, { code, language: lang.id }).catch(() => {})
+    }, 1000)
+    return () => { if (syncTimer.current) clearTimeout(syncTimer.current) }
+  }, [code, lang.id, sessionId, sessionStarted])
 
   const switchLang = (id: string) => {
     const l = LANGUAGES.find(x => x.id === id)!

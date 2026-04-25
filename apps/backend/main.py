@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 # ── Supabase client ─────────────────────────────────────────
 SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_KEY")  # anon key for auth operations
 SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY") or os.getenv("SUPABASE_KEY")
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_KEY (or SUPABASE_SERVICE_KEY) must be set")
@@ -240,15 +241,13 @@ async def register(body: RegisterRequest):
 
 @app.post("/auth/login", response_model=AuthToken)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    # Use a throwaway client with the anon key for auth — keeps the main
+    # service-key client's session untouched for concurrent logins.
     try:
-        auth_res = supabase.auth.sign_in_with_password({"email": form_data.username, "password": form_data.password})
+        from supabase import create_client as _create
+        _tmp = _create(SUPABASE_URL, SUPABASE_ANON_KEY)
+        auth_res = _tmp.auth.sign_in_with_password({"email": form_data.username, "password": form_data.password})
         sb_user = auth_res.user
-        # Immediately clear the server-side Supabase session so concurrent
-        # logins from different users don't clobber each other.
-        try:
-            supabase.auth.sign_out()
-        except Exception:
-            pass
     except Exception as e:
         print(f"[LOGIN ERROR] email={form_data.username} error={e}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -333,6 +332,29 @@ async def stop_session(session_id: str, current_user: User = Depends(get_current
         "status": "completed", "ended_at": datetime.utcnow().isoformat(),
     }).eq("id", session_id).execute()
     return {"status": "completed", "session_id": session_id}
+
+# ── Live code sync (in-memory, candidate → interviewer) ──────
+_live_code: dict[str, dict] = {}  # session_id → {code, language, updated_at}
+
+class CodeSyncRequest(BaseModel):
+    code: str
+    language: str = "python"
+
+@app.put("/sessions/{session_id}/code")
+async def sync_code(session_id: str, body: CodeSyncRequest, current_user: User = Depends(get_current_user)):
+    _live_code[session_id] = {
+        "code": body.code,
+        "language": body.language,
+        "updated_at": datetime.utcnow().isoformat(),
+    }
+    return {"ok": True}
+
+@app.get("/sessions/{session_id}/code")
+async def get_code(session_id: str, current_user: User = Depends(get_current_user)):
+    entry = _live_code.get(session_id)
+    if not entry:
+        return {"code": "", "language": "python", "updated_at": None}
+    return entry
 
 @app.get("/sessions/{session_id}/proctor-events")
 async def get_proctor_events(session_id: str, current_user: User = Depends(get_current_user)):
