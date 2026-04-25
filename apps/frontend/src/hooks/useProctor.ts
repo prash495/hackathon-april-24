@@ -11,23 +11,21 @@ const EVENT_COOLDOWN_MS = 5000
 export type ProctoringStatus = 'loading' | 'running' | 'error'
 
 async function loadMediaPipe(): Promise<FaceLandmarker> {
-  // Monaco registers an AMD `define` on window; MediaPipe's WASM loader also
-  // calls anonymous define() and they conflict. Hide it for the full init.
+  // Monaco's AMD loader intercepts anonymous define() calls from MediaPipe's
+  // WASM script. Deleting define.amd tells the loader to stop acting as AMD,
+  // so the WASM script's define() call is ignored rather than queued.
   const w = window as unknown as Record<string, unknown>
-  const saved = w['define']
-  delete w['define']
-  try {
-    const vision = await FilesetResolver.forVisionTasks(WASM_PATH)
-    return await FaceLandmarker.createFromOptions(vision, {
-      baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-      runningMode: 'VIDEO',
-      numFaces: 1,
-      outputFaceBlendshapes: false,
-      outputFacialTransformationMatrixes: false,
-    })
-  } finally {
-    if (saved !== undefined) w['define'] = saved
-  }
+  const define = w['define'] as Record<string, unknown> | undefined
+  if (define) delete define['amd']
+
+  const vision = await FilesetResolver.forVisionTasks(WASM_PATH)
+  return FaceLandmarker.createFromOptions(vision, {
+    baseOptions: { modelAssetPath: MODEL_URL, delegate: 'CPU' },
+    runningMode: 'VIDEO',
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: false,
+  })
 }
 
 export function useProctor(sessionId: string) {
@@ -46,9 +44,6 @@ export function useProctor(sessionId: string) {
     let stream: MediaStream | null = null
 
     async function init() {
-      // Kick off MediaPipe load immediately (runs while user reads permission prompt)
-      const mediapipePromise = loadMediaPipe()
-
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
       } catch (e: unknown) {
@@ -67,8 +62,10 @@ export function useProctor(sessionId: string) {
         await videoRef.current.play().catch(() => {})
       }
 
+      // Start MediaPipe only after camera is ready — this ensures window.define
+      // is hidden only after Monaco has finished its own AMD setup.
       try {
-        landmarkerRef.current = await mediapipePromise
+        landmarkerRef.current = await loadMediaPipe()
       } catch (e: unknown) {
         setError(`MediaPipe failed to load: ${e instanceof Error ? e.message : String(e)}`)
         setStatus('error')
