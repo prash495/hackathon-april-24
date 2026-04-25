@@ -185,12 +185,6 @@ export default function SessionPage() {
             Level {session?.assistance_level ?? 1} assistance
           </div>
         </div>
-        <div className="border-t border-gray-100 px-5 py-3">
-          <button onClick={endSession}
-            className="w-full text-xs text-red-600 border border-red-200 px-3 py-2 hover:bg-red-50 transition-colors">
-            Submit &amp; End Session
-          </button>
-        </div>
       </div>
 
       {/* Middle: Editor + Output */}
@@ -212,6 +206,10 @@ export default function SessionPage() {
           <button onClick={runCode} disabled={running}
             className="text-xs bg-green-600 text-white px-4 py-1.5 hover:bg-green-700 transition-colors disabled:opacity-50 font-medium">
             {running ? '⏳ Running...' : '▶ Run Code'}
+          </button>
+          <button onClick={endSession}
+            className="text-xs bg-black text-white px-4 py-1.5 hover:bg-gray-800 transition-colors font-medium">
+            Submit
           </button>
         </div>
 

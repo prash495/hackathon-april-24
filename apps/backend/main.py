@@ -31,6 +31,7 @@ if not SUPABASE_URL or not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_URL and SUPABASE_KEY (or SUPABASE_SERVICE_KEY) must be set")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase_anon: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
 
 # ── Anthropic client ─────────────────────────────────────────
 _anthropic = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_KEY"))
@@ -87,7 +88,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY must be set")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -203,7 +206,7 @@ def ethics_logic_gate(prompt: str, assistance_level: int) -> dict:
         raise PolicyViolation("Full-solution requests are prohibited during interviews.")
     if assistance_level == 0:
         return {"allowed": False, "violation": "AI assistance is disabled for this session."}
-    if assistance_level == 1 and intent not in ("syntax_lookup", "unknown"):
+    if assistance_level == 1 and intent not in ("syntax_lookup",):
         return {"allowed": False, "violation": f"Only syntax questions allowed at this level. Detected: {intent}"}
     return {"allowed": True, "intent": intent}
 
@@ -244,9 +247,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     # Use a throwaway client with the anon key for auth — keeps the main
     # service-key client's session untouched for concurrent logins.
     try:
-        from supabase import create_client as _create
-        _tmp = _create(SUPABASE_URL, SUPABASE_ANON_KEY)
-        auth_res = _tmp.auth.sign_in_with_password({"email": form_data.username, "password": form_data.password})
+        auth_res = supabase_anon.auth.sign_in_with_password({"email": form_data.username, "password": form_data.password})
         sb_user = auth_res.user
     except Exception as e:
         print(f"[LOGIN ERROR] email={form_data.username} error={e}")
@@ -331,6 +332,7 @@ async def stop_session(session_id: str, current_user: User = Depends(get_current
     supabase.table("interview_sessions").update({
         "status": "completed", "ended_at": datetime.utcnow().isoformat(),
     }).eq("id", session_id).execute()
+    _live_code.pop(session_id, None)
     return {"status": "completed", "session_id": session_id}
 
 # ── Live code sync (in-memory, candidate → interviewer) ──────

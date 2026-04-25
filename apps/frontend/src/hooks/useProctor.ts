@@ -74,7 +74,7 @@ export function useProctor(sessionId: string) {
             const ctx = canvas.getContext('2d')
             if (ctx) {
               const video = videoRef.current
-              if (video) {
+              if (video && (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight)) {
                 canvas.width = video.videoWidth
                 canvas.height = video.videoHeight
               }

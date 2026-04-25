@@ -159,6 +159,10 @@ def log_event(session_id: str, event_type: str, severity: str, metadata: dict | 
     if now - _last_event.get(key, 0) < EVENT_COOLDOWN:
         return
     _last_event[key] = now
+    # Prune stale entries to prevent unbounded growth
+    stale = [k for k, t in list(_last_event.items()) if now - t > EVENT_COOLDOWN]
+    for k in stale:
+        del _last_event[k]
     try:
         supabase.table("proctor_events").insert({
             "session_id": session_id,
