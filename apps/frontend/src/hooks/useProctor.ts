@@ -26,7 +26,17 @@ export function useProctor(sessionId: string) {
     let stream: MediaStream | null = null
 
     async function init() {
-      // 1. Camera
+      // Load MediaPipe and request camera permission in parallel.
+      // This way the WASM download happens while the user is reading the permission prompt.
+      const mediapipePromise = FilesetResolver.forVisionTasks(WASM_PATH)
+        .then(vision => FaceLandmarker.createFromOptions(vision, {
+          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+          runningMode: 'VIDEO',
+          numFaces: 1,
+          outputFaceBlendshapes: false,
+          outputFacialTransformationMatrixes: false,
+        }))
+
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
       } catch (e: unknown) {
@@ -45,16 +55,8 @@ export function useProctor(sessionId: string) {
         await videoRef.current.play().catch(() => {})
       }
 
-      // 2. MediaPipe
       try {
-        const vision = await FilesetResolver.forVisionTasks(WASM_PATH)
-        landmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-          runningMode: 'VIDEO',
-          numFaces: 1,
-          outputFaceBlendshapes: false,
-          outputFacialTransformationMatrixes: false,
-        })
+        landmarkerRef.current = await mediapipePromise
       } catch (e: unknown) {
         setError(`MediaPipe failed to load: ${e instanceof Error ? e.message : String(e)}`)
         setStatus('error')
