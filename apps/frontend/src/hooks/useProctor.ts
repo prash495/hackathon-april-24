@@ -10,23 +10,24 @@ const EVENT_COOLDOWN_MS = 5000
 
 export type ProctoringStatus = 'loading' | 'running' | 'error'
 
-function loadMediaPipe(): Promise<FaceLandmarker> {
+async function loadMediaPipe(): Promise<FaceLandmarker> {
   // Monaco registers an AMD `define` on window; MediaPipe's WASM loader also
-  // calls anonymous define() and they conflict. Hide it while loading.
+  // calls anonymous define() and they conflict. Hide it for the full init.
   const w = window as unknown as Record<string, unknown>
   const saved = w['define']
   delete w['define']
-  return FilesetResolver.forVisionTasks(WASM_PATH)
-    .then(vision => FaceLandmarker.createFromOptions(vision, {
+  try {
+    const vision = await FilesetResolver.forVisionTasks(WASM_PATH)
+    return await FaceLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
       runningMode: 'VIDEO',
       numFaces: 1,
       outputFaceBlendshapes: false,
       outputFacialTransformationMatrixes: false,
-    }))
-    .finally(() => {
-      if (saved !== undefined) w['define'] = saved
     })
+  } finally {
+    if (saved !== undefined) w['define'] = saved
+  }
 }
 
 export function useProctor(sessionId: string) {
