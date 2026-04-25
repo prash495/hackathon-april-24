@@ -7,7 +7,7 @@ import {
 // ─── Icon badge component ─────────────────────────────────────
 function IconBadge({ icon: Icon }: { icon: React.ElementType }) {
   return (
-    <div className="w-11 h-11 flex items-center justify-center shrink-0 bg-black">
+    <div className="w-11 h-11 flex items-center justify-center shrink-0 bg-black rounded-lg">
       <Icon size={20} className="text-white" strokeWidth={1.75} />
     </div>
   )
@@ -151,32 +151,32 @@ export default function Home() {
     <main className="bg-white text-black">
 
       {/* ── Hero ─────────────────────────────────────────────── */}
-      <section className="max-w-6xl mx-auto px-6 pt-20 pb-24 border-b-2 border-gray-100">
-        <p className="text-sm uppercase tracking-widest text-gray-400 mb-6 font-medium">
+      <section className="max-w-6xl mx-auto px-6 pt-24 pb-28 border-b border-gray-100">
+        <p className="text-sm uppercase tracking-widest text-gray-400 mb-6 font-medium animate-fade-in-up">
           AI-Powered Technical Interviews
         </p>
-        <h1 className="text-5xl md:text-6xl lg:text-7xl max-w-4xl mb-7 leading-[1.1]">
+        <h1 className="text-5xl md:text-6xl lg:text-7xl max-w-4xl mb-7 leading-[1.08] animate-fade-in-up stagger-1 gradient-text">
           The interview platform<br />built for how engineers<br />actually work.
         </h1>
-        <p className="text-xl text-gray-500 max-w-2xl mb-4 leading-relaxed">
+        <p className="text-xl text-gray-500 max-w-2xl mb-4 leading-relaxed animate-fade-in-up stagger-2">
           Real engineers look things up. They use documentation, reference APIs, and think through
           algorithms out loud. InterviewPilot lets candidates do exactly that — while guaranteeing
           the thinking stays theirs.
         </p>
-        <p className="text-lg text-gray-400 max-w-xl mb-10 leading-relaxed">
+        <p className="text-lg text-gray-400 max-w-xl mb-10 leading-relaxed animate-fade-in-up stagger-3">
           Interviewers get a complete picture of how a candidate reasons, not just whether they
           memorised the right answer under pressure.
         </p>
-        <div className="flex flex-wrap gap-4">
+        <div className="flex flex-wrap gap-4 animate-fade-in-up stagger-4">
           <Link
             href="/signup"
-            className="inline-flex items-center gap-2 bg-black text-white text-base font-semibold px-8 py-4 min-h-[52px] hover:bg-gray-800 active:scale-[0.98] transition-all"
+            className="inline-flex items-center gap-2 bg-black text-white text-base font-semibold px-8 py-4 min-h-[52px] rounded-lg hover:bg-gray-800 hover:shadow-lg active:scale-[0.97] transition-all"
           >
             Start as Interviewer <ArrowRight size={16} />
           </Link>
           <Link
             href="/signup"
-            className="inline-flex items-center gap-2 border-2 border-black text-black text-base font-semibold px-8 py-4 min-h-[52px] hover:bg-black hover:text-white active:scale-[0.98] transition-all"
+            className="inline-flex items-center gap-2 border-2 border-black text-black text-base font-semibold px-8 py-4 min-h-[52px] rounded-lg hover:bg-black hover:text-white active:scale-[0.97] transition-all"
           >
             Join as Candidate <ArrowRight size={16} />
           </Link>
@@ -194,21 +194,21 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 border-2 border-gray-100">
+        <div className="grid md:grid-cols-3 border-2 border-gray-100 shadow-lg rounded-xl overflow-hidden">
           {distinctions.map((item, i) => (
             <div
               key={i}
-              className={`px-8 py-10 ${i < 2 ? 'border-b-2 md:border-b-0 md:border-r-2 border-gray-100' : ''}`}
+              className={`px-8 py-10 transition-all duration-300 hover:bg-gray-50 hover:shadow-md cursor-default ${i < 2 ? 'border-b-2 md:border-b-0 md:border-r-2 border-gray-100' : ''}`}
             >
               {/* Icon + allowed/blocked badge */}
               <div className="flex items-center gap-3 mb-5">
-                <div className="w-10 h-10 flex items-center justify-center bg-black">
+                <div className="w-10 h-10 flex items-center justify-center bg-black rounded-lg transition-transform duration-300 hover:scale-110 hover:rotate-3">
                   <item.Icon size={18} className="text-white" strokeWidth={1.75} />
                 </div>
-                <div className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 ${
+                <div className={`flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded-full transition-all duration-200 ${
                   item.allowed
-                    ? 'bg-gray-100 text-gray-700'
-                    : 'bg-black text-white'
+                    ? 'bg-gray-100 text-gray-700 hover:bg-green-100 hover:text-green-700'
+                    : 'bg-black text-white hover:bg-red-600'
                 }`}>
                   {item.allowed
                     ? <Check size={12} strokeWidth={2.5} />
@@ -239,15 +239,15 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-px bg-gray-100">
+        <div className="grid md:grid-cols-2 gap-px bg-gray-100 shadow-lg rounded-xl overflow-hidden">
           {howItWorks.map((h) => (
-            <div key={h.step} className="bg-white px-8 py-10 relative">
+            <div key={h.step} className="bg-white px-8 py-10 relative card-hover">
               <span className="cm cm-tl">+</span>
               <span className="cm cm-tr">+</span>
               <span className="cm cm-bl">+</span>
               <span className="cm cm-br">+</span>
               <div className="flex items-start gap-4 mb-5">
-                <div className="w-11 h-11 flex items-center justify-center shrink-0 bg-black">
+                <div className="w-11 h-11 flex items-center justify-center shrink-0 bg-black rounded-lg">
                   <h.Icon size={20} className="text-white" strokeWidth={1.75} />
                 </div>
                 <span className="text-5xl font-bold text-gray-100 leading-none mt-0.5">{h.step}</span>
@@ -270,9 +270,9 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-2 gap-px bg-gray-100">
+        <div className="grid md:grid-cols-2 gap-px bg-gray-100 shadow-lg rounded-xl overflow-hidden">
           {features.map((f) => (
-            <div key={f.title} className="bg-white px-8 py-10 relative">
+            <div key={f.title} className="bg-white px-8 py-10 relative card-hover">
               <span className="cm cm-tl">+</span>
               <span className="cm cm-tr">+</span>
               <span className="cm cm-bl">+</span>
@@ -304,9 +304,9 @@ export default function Home() {
           </p>
         </div>
 
-        <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-px bg-gray-100">
+        <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-px bg-gray-100 shadow-lg rounded-xl overflow-hidden">
           {levels.map((l, i) => (
-            <div key={i} className="bg-white px-6 py-8 relative flex flex-col">
+            <div key={i} className="bg-white px-6 py-8 relative flex flex-col card-hover">
               <span className="cm cm-tl">+</span>
               <span className="cm cm-tr">+</span>
               <span className="cm cm-bl">+</span>
@@ -336,14 +336,14 @@ export default function Home() {
 
       {/* ── CTA ──────────────────────────────────────────────── */}
       <section className="max-w-6xl mx-auto px-6 py-24">
-        <div className="border-2 border-gray-100 px-10 py-16 md:px-16 md:py-20 relative">
+        <div className="border-2 border-gray-100 px-10 py-16 md:px-16 md:py-20 relative rounded-2xl shadow-xl">
           <span className="cm cm-tl">+</span>
           <span className="cm cm-tr">+</span>
           <span className="cm cm-bl">+</span>
           <span className="cm cm-br">+</span>
 
           <div className="flex items-center gap-3 mb-5">
-            <div className="w-10 h-10 bg-black flex items-center justify-center">
+            <div className="w-10 h-10 bg-black flex items-center justify-center rounded-lg">
               <Zap size={18} className="text-white" strokeWidth={1.75} />
             </div>
             <p className="text-sm uppercase tracking-widest text-gray-400 font-medium">Get started</p>
@@ -359,13 +359,13 @@ export default function Home() {
           <div className="flex flex-wrap gap-4">
             <Link
               href="/signup"
-              className="inline-flex items-center gap-2 bg-black text-white text-base font-semibold px-8 py-4 min-h-[52px] hover:bg-gray-800 active:scale-[0.98] transition-all"
+              className="inline-flex items-center gap-2 bg-black text-white text-base font-semibold px-8 py-4 min-h-[52px] rounded-lg hover:bg-gray-800 hover:shadow-lg active:scale-[0.97] transition-all"
             >
               I'm an Interviewer <ArrowRight size={16} />
             </Link>
             <Link
               href="/signup"
-              className="inline-flex items-center gap-2 border-2 border-black text-black text-base font-semibold px-8 py-4 min-h-[52px] hover:bg-black hover:text-white active:scale-[0.98] transition-all"
+              className="inline-flex items-center gap-2 border-2 border-black text-black text-base font-semibold px-8 py-4 min-h-[52px] rounded-lg hover:bg-black hover:text-white active:scale-[0.97] transition-all"
             >
               I'm a Candidate <ArrowRight size={16} />
             </Link>

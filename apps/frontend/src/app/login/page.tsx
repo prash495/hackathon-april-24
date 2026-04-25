@@ -48,7 +48,7 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
 
         {/* Card */}
-        <div className="border-2 border-gray-100 p-8 md:p-12 relative">
+        <div className="border-2 border-gray-100 p-8 md:p-12 relative animate-fade-in-up rounded-xl">
           <span className="cm cm-tl">+</span>
           <span className="cm cm-tr">+</span>
           <span className="cm cm-bl">+</span>
