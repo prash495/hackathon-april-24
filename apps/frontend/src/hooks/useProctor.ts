@@ -10,6 +10,10 @@ const EVENT_COOLDOWN_MS = 5000
 
 export type ProctoringStatus = 'loading' | 'running' | 'error'
 
+// Module-level singleton — prevents opening the camera more than once across
+// re-mounts (React StrictMode double-invoke, HMR, etc.)
+let activeStream: MediaStream | null = null
+
 async function loadMediaPipe(): Promise<FaceLandmarker> {
   // Monaco's AMD loader intercepts anonymous define() calls from MediaPipe's
   // WASM script. Deleting define.amd tells the loader to stop acting as AMD,
@@ -40,25 +44,34 @@ export function useProctor(sessionId: string) {
   const [cheating, setCheating] = useState(false)
   const [gazeLabel, setGazeLabel] = useState('Looking Straight')
 
-  useEffect(() => {
-    let stream: MediaStream | null = null
+  const stop = () => {
+    cancelAnimationFrame(rafRef.current)
+    activeStream?.getTracks().forEach(t => t.stop())
+    activeStream = null
+    landmarkerRef.current?.close()
+    landmarkerRef.current = null
+  }
 
+  useEffect(() => {
     async function init() {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true })
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e)
-        setError(msg.includes('Permission') || msg.includes('NotAllowed')
-          ? 'Camera permission denied'
-          : msg.includes('NotFound') || msg.includes('Devices')
-          ? 'No camera found'
-          : `Camera unavailable: ${msg}`)
-        setStatus('error')
-        return
+      // Reuse existing stream if camera is already open
+      if (!activeStream) {
+        try {
+          activeStream = await navigator.mediaDevices.getUserMedia({ video: true })
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setError(msg.includes('Permission') || msg.includes('NotAllowed')
+            ? 'Camera permission denied'
+            : msg.includes('NotFound') || msg.includes('Devices')
+            ? 'No camera found'
+            : `Camera unavailable: ${msg}`)
+          setStatus('error')
+          return
+        }
       }
 
       if (videoRef.current) {
-        videoRef.current.srcObject = stream
+        videoRef.current.srcObject = activeStream
         await videoRef.current.play().catch(() => {})
       }
 
@@ -162,10 +175,8 @@ export function useProctor(sessionId: string) {
 
     return () => {
       cancelAnimationFrame(rafRef.current)
-      stream?.getTracks().forEach(t => t.stop())
-      landmarkerRef.current?.close()
     }
   }, [sessionId])
 
-  return { videoRef, canvasRef, status, error, cheating, gazeLabel }
+  return { videoRef, canvasRef, status, error, cheating, gazeLabel, stop }
 }

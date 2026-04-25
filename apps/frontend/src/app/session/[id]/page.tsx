@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { api } from '@/lib/api'
 import { getToken } from '@/lib/auth'
 import dynamic from 'next/dynamic'
+import type { ProctoringOverlayHandle } from '@/components/ProctoringOverlay'
 
 const Editor = dynamic(() => import('@monaco-editor/react'), { ssr: false })
 const ProctoringOverlay = dynamic(() => import('@/components/ProctoringOverlay'), { ssr: false })
@@ -42,6 +43,7 @@ export default function SessionPage() {
   const [sessionStarted, setSessionStarted] = useState(false)
   const [joining, setJoining] = useState(false)
   const [activeTab, setActiveTab] = useState<'output' | 'input'>('output')
+  const proctorRef = useRef<ProctoringOverlayHandle>(null)
 
   useEffect(() => {
     if (!getToken()) return
@@ -71,6 +73,7 @@ export default function SessionPage() {
   }
 
   const endSession = async () => {
+    proctorRef.current?.stop()
     try {
       await api.post(`/sessions/${sessionId}/stop`)
       setSessionStarted(false)
@@ -151,7 +154,7 @@ export default function SessionPage() {
   // Active session
   return (
     <div className="h-[calc(100vh-56px)] flex bg-white text-black overflow-hidden">
-      <ProctoringOverlay sessionId={sessionId} />
+      <ProctoringOverlay ref={proctorRef} sessionId={sessionId} />
 
       {/* Left: Problem */}
       <div className="w-64 border-r border-gray-200 flex flex-col overflow-hidden">

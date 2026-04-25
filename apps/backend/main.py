@@ -5,6 +5,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import os
+import logging
 import subprocess
 import threading
 import tempfile
@@ -18,6 +19,9 @@ import anthropic
 from supabase import create_client, Client
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # ── Supabase client ─────────────────────────────────────────
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -427,12 +431,16 @@ class ProctorEventRequest(BaseModel):
 
 @app.post("/sessions/{session_id}/proctor-events", status_code=201)
 async def create_proctor_event(session_id: str, body: ProctorEventRequest, current_user: User = Depends(get_current_user)):
-    supabase.table("proctor_events").insert({
-        "session_id": session_id,
-        "event_type": body.event_type,
-        "severity": body.severity,
-        "metadata": body.metadata or "{}",
-    }).execute()
+    try:
+        supabase.table("proctor_events").insert({
+            "session_id": session_id,
+            "event_type": body.event_type,
+            "severity": body.severity,
+            "metadata": body.metadata or "{}",
+        }).execute()
+    except Exception as e:
+        logger.error("Failed to persist proctor event for session %s: %s", session_id, e)
+        raise
     return {"ok": True}
 
 @app.get("/sessions/{session_id}/stream")
