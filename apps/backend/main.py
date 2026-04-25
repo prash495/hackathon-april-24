@@ -1,13 +1,20 @@
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, status, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from typing import Optional, List
 import os
+import base64
+import logging
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
+import numpy as np
+import cv2
+import mediapipe as mp
+
+from gaze import GazeAnalyzer
 
 load_dotenv()
 
@@ -288,6 +295,108 @@ async def process_ai_prompt(request: AIPromptRequest):
 async def get_session_prompts(session_id: str):
     """Get all AI prompts for a session (for interviewer review)"""
     return []
+
+
+# ─── PROCTOR: WebSocket for live webcam gaze detection ─────────
+# 
+# How this works:
+#   1. Frontend opens WebSocket to ws://localhost:8000/ws/proctor
+#   2. Frontend captures webcam frames as base64 JPEG (~5 FPS)
+#   3. Frontend sends each frame as a text message
+#   4. Server decodes the JPEG, runs MediaPipe face detection
+#   5. Server runs gaze + head pose analysis
+#   6. Server sends back JSON with status, direction, angles
+#
+# The frontend uses this to show a green/red overlay on the webcam feed.
+# ────────────────────────────────────────────────────────────────
+
+log = logging.getLogger("proctor")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# MediaPipe face landmarker (IMAGE mode = one frame at a time)
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "mediapipe-core", "face_landmarker_v2_with_blendshapes.task")
+
+_landmarker = None
+
+def get_landmarker():
+    """Lazy-load the MediaPipe landmarker (so server starts even if model missing)."""
+    global _landmarker
+    if _landmarker is None:
+        opts = mp.tasks.vision.FaceLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=MODEL_PATH),
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+        )
+        _landmarker = mp.tasks.vision.FaceLandmarker.create_from_options(opts)
+        log.info("MediaPipe face landmarker loaded")
+    return _landmarker
+
+
+# One GazeAnalyzer per WebSocket connection (tracks cheat_counter per user)
+@app.websocket("/ws/proctor")
+async def proctor_websocket(ws: WebSocket):
+    await ws.accept()
+    analyzer = GazeAnalyzer()
+    landmarker = get_landmarker()
+    log.info("Proctor WebSocket connected")
+
+    try:
+        while True:
+            # Receive base64-encoded JPEG from frontend
+            data = await ws.receive_text()
+
+            # Strip data URL prefix if present: "data:image/jpeg;base64,..."
+            if "," in data:
+                data = data.split(",", 1)[1]
+
+            # Decode base64 → bytes → numpy array → RGB image (skip BGR→RGB conversion)
+            img_bytes = base64.b64decode(data)
+            np_arr = np.frombuffer(img_bytes, dtype=np.uint8)
+            frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                await ws.send_json({"error": "Could not decode frame"})
+                continue
+
+            # Downscale for faster processing (MediaPipe doesn't need full res)
+            frame_small = cv2.resize(frame, (320, 240))
+            h, w = frame_small.shape[:2]
+
+            # Run MediaPipe face detection
+            rgb = cv2.cvtColor(frame_small, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result = landmarker.detect(mp_image)
+
+            if not result.face_landmarks:
+                # No face detected — suspicious
+                analyzer.cheat_counter += 1
+                await ws.send_json({
+                    "status": "NO_FACE",
+                    "gaze": "NO_FACE",
+                    "lateral": 0,
+                    "angle": 0,
+                    "cheating": analyzer.cheat_counter >= analyzer.cheat_frame_threshold,
+                    "cheat_counter": analyzer.cheat_counter,
+                    "face_count": 0,
+                })
+                continue
+
+            # Analyze the first face
+            face = result.face_landmarks[0]
+            analysis = analyzer.analyze(face, w, h)
+            analysis["face_count"] = len(result.face_landmarks)
+
+            # Multiple faces = also suspicious
+            if len(result.face_landmarks) > 1:
+                analysis["status"] = "MULTIPLE_FACES"
+                analysis["gaze"] = "MULTIPLE_FACES"
+
+            await ws.send_json(analysis)
+
+    except WebSocketDisconnect:
+        log.info("Proctor WebSocket disconnected")
+    except Exception as e:
+        log.error(f"Proctor WebSocket error: {e}")
+        await ws.close()
 
 if __name__ == "__main__":
     import uvicorn
