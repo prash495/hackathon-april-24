@@ -13,6 +13,26 @@ from datetime import datetime, timedelta
 from jose import JWTError, jwt
 import bcrypt
 import anthropic
+
+# ── Patch httpx.Client to accept (and ignore) the 'proxy' kwarg ──
+# gotrue passes proxy= to httpx.Client, but httpx >=0.28 removed it.
+import httpx
+_OrigSyncClient = httpx.Client
+_OrigAsyncClient = httpx.AsyncClient
+
+class _PatchedSyncClient(_OrigSyncClient):
+    def __init__(self, **kwargs):
+        kwargs.pop("proxy", None)
+        super().__init__(**kwargs)
+
+class _PatchedAsyncClient(_OrigAsyncClient):
+    def __init__(self, **kwargs):
+        kwargs.pop("proxy", None)
+        super().__init__(**kwargs)
+
+httpx.Client = _PatchedSyncClient
+httpx.AsyncClient = _PatchedAsyncClient
+
 from supabase import create_client, Client
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"), override=False)

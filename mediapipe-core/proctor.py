@@ -31,6 +31,24 @@ _backend_env = os.path.join(os.path.dirname(os.path.abspath(__file__)),
 if os.path.exists(_backend_env):
     load_dotenv(dotenv_path=_backend_env)
 
+# ── Patch httpx.Client to accept (and ignore) the 'proxy' kwarg ──
+import httpx
+_OrigSyncClient = httpx.Client
+_OrigAsyncClient = httpx.AsyncClient
+
+class _PatchedSyncClient(_OrigSyncClient):
+    def __init__(self, **kwargs):
+        kwargs.pop("proxy", None)
+        super().__init__(**kwargs)
+
+class _PatchedAsyncClient(_OrigAsyncClient):
+    def __init__(self, **kwargs):
+        kwargs.pop("proxy", None)
+        super().__init__(**kwargs)
+
+httpx.Client = _PatchedSyncClient
+httpx.AsyncClient = _PatchedAsyncClient
+
 from supabase import create_client, Client
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
