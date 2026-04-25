@@ -10,6 +10,25 @@ const EVENT_COOLDOWN_MS = 5000
 
 export type ProctoringStatus = 'loading' | 'running' | 'error'
 
+function loadMediaPipe(): Promise<FaceLandmarker> {
+  // Monaco registers an AMD `define` on window; MediaPipe's WASM loader also
+  // calls anonymous define() and they conflict. Hide it while loading.
+  const w = window as unknown as Record<string, unknown>
+  const saved = w['define']
+  delete w['define']
+  return FilesetResolver.forVisionTasks(WASM_PATH)
+    .then(vision => FaceLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
+      runningMode: 'VIDEO',
+      numFaces: 1,
+      outputFaceBlendshapes: false,
+      outputFacialTransformationMatrixes: false,
+    }))
+    .finally(() => {
+      if (saved !== undefined) w['define'] = saved
+    })
+}
+
 export function useProctor(sessionId: string) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -26,16 +45,8 @@ export function useProctor(sessionId: string) {
     let stream: MediaStream | null = null
 
     async function init() {
-      // Load MediaPipe and request camera permission in parallel.
-      // This way the WASM download happens while the user is reading the permission prompt.
-      const mediapipePromise = FilesetResolver.forVisionTasks(WASM_PATH)
-        .then(vision => FaceLandmarker.createFromOptions(vision, {
-          baseOptions: { modelAssetPath: MODEL_URL, delegate: 'GPU' },
-          runningMode: 'VIDEO',
-          numFaces: 1,
-          outputFaceBlendshapes: false,
-          outputFacialTransformationMatrixes: false,
-        }))
+      // Kick off MediaPipe load immediately (runs while user reads permission prompt)
+      const mediapipePromise = loadMediaPipe()
 
       try {
         stream = await navigator.mediaDevices.getUserMedia({ video: true })
@@ -97,7 +108,6 @@ export function useProctor(sessionId: string) {
         const face = faces[0]
         const w = canvas.width, h = canvas.height
 
-        // Draw mesh
         for (const lmk of face) {
           ctx.beginPath()
           ctx.arc(lmk.x * w, lmk.y * h, 1, 0, Math.PI * 2)
@@ -105,7 +115,6 @@ export function useProctor(sessionId: string) {
           ctx.fill()
         }
 
-        // Face normal angle
         const pts = [54, 284, 152].map(i => face[i])
         const v1 = [pts[1].x - pts[0].x, pts[1].y - pts[0].y, pts[1].z - pts[0].z]
         const v2 = [pts[2].x - pts[0].x, pts[2].y - pts[0].y, pts[2].z - pts[0].z]
@@ -116,10 +125,9 @@ export function useProctor(sessionId: string) {
         ]
         const len = Math.sqrt(normal[0]**2 + normal[1]**2 + normal[2]**2)
         const n = normal.map(x => x / len)
-        const dot = Math.max(-1, Math.min(1, n[2] * -1)) // dot with [0,0,-1]
+        const dot = Math.max(-1, Math.min(1, n[2] * -1))
         const angle = 180 - Math.acos(dot) * (180 / Math.PI)
 
-        // Gaze
         const left = irisRatio(face, 473, 463, 263)
         const right = irisRatio(face, 468, 133, 33)
         const lateral = (left - right) * 100
@@ -133,12 +141,10 @@ export function useProctor(sessionId: string) {
       setCheating(isCheating)
       setGazeLabel(gaze)
 
-      // Draw label
       ctx.font = 'bold 14px sans-serif'
       ctx.fillStyle = isCheating ? 'red' : 'lime'
       ctx.fillText(isCheating ? `Cheating – ${gaze}` : 'OK', 8, 20)
 
-      // Report event
       if (isCheating) {
         const now = Date.now()
         if (now - lastEventRef.current > EVENT_COOLDOWN_MS) {
