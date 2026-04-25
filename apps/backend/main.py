@@ -242,6 +242,12 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     try:
         auth_res = supabase.auth.sign_in_with_password({"email": form_data.username, "password": form_data.password})
         sb_user = auth_res.user
+        # Immediately clear the server-side Supabase session so concurrent
+        # logins from different users don't clobber each other.
+        try:
+            supabase.auth.sign_out()
+        except Exception:
+            pass
     except Exception as e:
         print(f"[LOGIN ERROR] email={form_data.username} error={e}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
