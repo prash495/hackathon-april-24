@@ -3,15 +3,17 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { Copy, Check, ArrowRight } from 'lucide-react'
 import { useRequireAuth } from '@/hooks/useRequireAuth'
+import { api } from '@/lib/api'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 
 const LEVELS = [
-  { value: 'no_ai',            label: 'Level 0', name: 'No AI',       desc: 'Traditional whiteboard' },
-  { value: 'syntax_only',      label: 'Level 1', name: 'Syntax Only', desc: 'Language references only' },
-  { value: 'conceptual_hints', label: 'Level 2', name: 'Conceptual',  desc: 'Algorithm hints allowed' },
-  { value: 'pair_programming', label: 'Level 3', name: 'Pair Mode',   desc: 'Small snippets, no solutions' },
+  { value: 0, label: 'Level 0', name: 'No AI',       desc: 'Traditional whiteboard' },
+  { value: 1, label: 'Level 1', name: 'Syntax Only', desc: 'Language references only' },
+  { value: 2, label: 'Level 2', name: 'Conceptual',  desc: 'Algorithm hints allowed' },
+  { value: 3, label: 'Level 3', name: 'Pair Mode',   desc: 'Small snippets, no solutions' },
 ]
 
 const DIFFICULTIES = ['easy', 'medium', 'hard'] as const
@@ -24,13 +26,15 @@ export default function CreateChallenge() {
     title: '',
     description: '',
     difficulty: 'medium' as typeof DIFFICULTIES[number],
-    assistance_level: 'syntax_only',
+    assistance_level: 1,
     starter_code: '',
   })
-  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [errors, setErrors]     = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
+  const [joinLink, setJoinLink] = useState<string | null>(null)
+  const [copied, setCopied]     = useState(false)
 
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+  const set = (k: string, v: string | number) => setForm(f => ({ ...f, [k]: v }))
 
   const validate = () => {
     const e: Record<string, string> = {}
@@ -45,12 +49,24 @@ export default function CreateChallenge() {
     if (!validate()) return
     setSubmitting(true)
     try {
-      await fetch('http://localhost:8000/challenges', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+      // 1. Create challenge
+      const challengeRes = await api.post<{ id: string }>('/challenges', {
+        title:            form.title,
+        description:      form.description,
+        difficulty:       form.difficulty,
+        assistance_level: String(form.assistance_level),
+        starter_code:     form.starter_code,
       })
-      router.push('/interviewer')
+      const challengeId = challengeRes.data.id
+
+      // 2. Create session linked to challenge
+      const sessionRes = await api.post<{ id: string; join_link: string }>('/sessions', {
+        challenge_id:     challengeId,
+        assistance_level: form.assistance_level,
+        max_prompts:      20,
+      })
+
+      setJoinLink(sessionRes.data.join_link)
     } catch {
       setErrors({ submit: 'Failed to create challenge. Please try again.' })
     } finally {
@@ -58,11 +74,72 @@ export default function CreateChallenge() {
     }
   }
 
+  const copyLink = () => {
+    if (!joinLink) return
+    navigator.clipboard.writeText(joinLink)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   if (isLoading || !user) {
     return (
       <div className="min-h-[calc(100vh-64px)] flex items-center justify-center">
         <span className="w-6 h-6 border-2 border-black border-t-transparent rounded-full animate-spin" />
       </div>
+    )
+  }
+
+  // ── Success state: show join link ──────────────────────────
+  if (joinLink) {
+    const sessionId = joinLink.split('/').pop()
+    return (
+      <main className="bg-white text-black min-h-screen">
+        <div className="max-w-2xl mx-auto px-6 py-12">
+          <div className="border-2 border-gray-100 p-10 relative">
+            <span className="cm cm-tl">+</span><span className="cm cm-tr">+</span>
+            <span className="cm cm-bl">+</span><span className="cm cm-br">+</span>
+
+            <div className="w-10 h-10 bg-black flex items-center justify-center mb-6">
+              <Check size={20} className="text-white" strokeWidth={2} />
+            </div>
+
+            <p className="text-sm uppercase tracking-widest text-gray-400 mb-2 font-medium">Challenge created</p>
+            <h1 className="text-3xl font-bold mb-2">{form.title}</h1>
+            <p className="text-gray-500 mb-8">Share this link with your candidate to start the session.</p>
+
+            {/* Join link */}
+            <div className="mb-6">
+              <p className="text-sm font-semibold text-gray-700 tracking-wide mb-2">Candidate Join Link</p>
+              <div className="flex gap-2">
+                <div className="flex-1 border-2 border-gray-200 px-4 py-3 text-sm font-mono text-gray-600 truncate bg-gray-50">
+                  {joinLink}
+                </div>
+                <button
+                  onClick={copyLink}
+                  className="inline-flex items-center gap-2 border-2 border-black px-4 py-3 text-sm font-semibold hover:bg-black hover:text-white transition-all min-w-[100px] justify-center"
+                >
+                  {copied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy</>}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Link
+                href={`/interviewer/session/${sessionId}`}
+                className="inline-flex items-center gap-2 bg-black text-white px-6 py-3 text-sm font-semibold hover:bg-gray-800 transition-all"
+              >
+                Open Monitor <ArrowRight size={14} />
+              </Link>
+              <Link
+                href="/interviewer"
+                className="inline-flex items-center gap-2 border-2 border-gray-200 px-6 py-3 text-sm font-semibold hover:border-black transition-all"
+              >
+                Back to Dashboard
+              </Link>
+            </div>
+          </div>
+        </div>
+      </main>
     )
   }
 

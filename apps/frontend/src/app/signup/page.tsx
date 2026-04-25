@@ -50,7 +50,13 @@ export default function SignupPage() {
       setAuth(data.user, data.access_token)
       router.push(role === 'interviewer' ? '/interviewer' : '/candidate')
     } catch (err: any) {
-      setServerError(err?.response?.data?.detail || 'Something went wrong. Please try again.')
+      const status = err?.response?.status
+      const detail = err?.response?.data?.detail
+      if (status === 409) {
+        setServerError('An account with this email already exists. Sign in instead.')
+      } else {
+        setServerError(detail || 'Something went wrong. Please try again.')
+      }
     } finally {
       setLoading(false)
     }
