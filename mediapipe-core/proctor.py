@@ -25,6 +25,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 # ── Load env from backend .env (local dev) or environment (production) ──
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 _backend_env = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                             "..", "apps", "backend", ".env")
 if os.path.exists(_backend_env):

@@ -15,6 +15,7 @@ import bcrypt
 import anthropic
 from supabase import create_client, Client
 
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
 _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 if os.path.exists(_env_path):
     load_dotenv(dotenv_path=_env_path)
