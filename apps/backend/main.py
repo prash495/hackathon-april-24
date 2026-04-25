@@ -1,13 +1,19 @@
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import os
+import subprocess
+import threading
+import tempfile
+import shutil
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 import bcrypt
+import httpx
 from supabase import create_client, Client
 
 load_dotenv()
@@ -41,16 +47,68 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+# ── Proctor subprocess manager ───────────────────────────────
+_proctor_processes: dict[str, tuple[subprocess.Popen, int]] = {}
+_next_stream_port = 9100
+
+PROCTOR_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "..", "..", "mediapipe-core", "proctor.py"
+)
+
+def _get_proctor_cmd(session_id: str, candidate_id: str, stream_port: int) -> list[str]:
+    script = os.path.abspath(PROCTOR_SCRIPT)
+    is_wsl = "microsoft" in os.uname().release.lower() if hasattr(os, "uname") else False
+    if is_wsl:
+        win_script = subprocess.check_output(["wslpath", "-w", script], text=True).strip()
+        win_project = subprocess.check_output(
+            ["wslpath", "-w", os.path.abspath(os.path.join(os.path.dirname(script), ".."))], text=True
+        ).strip()
+        win_venv_python = win_project + "\\.venv\\Scripts\\python.exe"
+        return [
+            "powershell.exe", "-Command",
+            f"cd '{win_project}'; & '{win_venv_python}' '{win_script}' {session_id} {SUPABASE_URL} {SUPABASE_KEY} {candidate_id} {stream_port}",
+        ]
+    else:
+        return ["uv", "run", "python", script, session_id, SUPABASE_URL, SUPABASE_KEY, candidate_id, str(stream_port)]
+
+def start_proctor(session_id: str, candidate_id: str) -> int:
+    global _next_stream_port
+    if session_id in _proctor_processes:
+        proc, port = _proctor_processes[session_id]
+        if proc.poll() is None:
+            return port
+    stream_port = _next_stream_port
+    _next_stream_port += 1
+    cmd = _get_proctor_cmd(session_id, candidate_id, stream_port)
+    print(f"[BACKEND] Launching proctor cmd: {cmd}", flush=True)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    _proctor_processes[session_id] = (proc, stream_port)
+    print(f"[BACKEND] Proctor started session={session_id} pid={proc.pid} port={stream_port}", flush=True)
+    def _check():
+        import time; time.sleep(3)
+        if proc.poll() is not None:
+            stderr = proc.stderr.read().decode() if proc.stderr else ""
+            print(f"[BACKEND] Proctor DIED session={session_id} exit={proc.returncode}", flush=True)
+            if stderr: print(f"[BACKEND] stderr: {stderr[:500]}", flush=True)
+    threading.Thread(target=_check, daemon=True).start()
+    return stream_port
+
+def stop_proctor(session_id: str):
+    entry = _proctor_processes.pop(session_id, None)
+    if entry:
+        proc, _ = entry
+        if proc.poll() is None:
+            proc.terminate()
+            try: proc.wait(timeout=5)
+            except subprocess.TimeoutExpired: proc.kill()
+        print(f"[BACKEND] Proctor stopped session={session_id}")
+
 # ── Models ───────────────────────────────────────────────────
 class User(BaseModel):
     id: Optional[str] = None
     email: str
     name: str
     role: str
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str
 
 class Challenge(BaseModel):
     id: Optional[str] = None
@@ -87,12 +145,6 @@ class RegisterRequest(BaseModel):
     name: str
     role: str
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
-    name: Optional[str] = None
-    role: Optional[str] = None
-
 class AuthToken(BaseModel):
     access_token: str
     token_type: str
@@ -100,6 +152,17 @@ class AuthToken(BaseModel):
 
 class PolicyViolation(Exception):
     pass
+
+class CodeRunRequest(BaseModel):
+    code: str
+    language: str
+    stdin: Optional[str] = ""
+
+class CodeRunResponse(BaseModel):
+    stdout: str
+    stderr: str
+    exit_code: int
+    timed_out: bool
 
 # ── Helpers ──────────────────────────────────────────────────
 def hash_password(password: str) -> str:
@@ -117,13 +180,12 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        email: str = payload.get("sub")
-        uid: str = payload.get("uid", "")
-        role: str = payload.get("role", "")
-        name: str = payload.get("name", "")
+        email = payload.get("sub")
+        uid = payload.get("uid", "")
+        role = payload.get("role", "")
+        name = payload.get("name", "")
         if not email:
             raise HTTPException(status_code=401, detail="Invalid token")
-        # Verify user still exists in Supabase
         res = supabase.table("profiles").select("id").eq("email", email).execute()
         if not res.data:
             raise HTTPException(status_code=401, detail="User not found")
@@ -132,26 +194,15 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> User:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 # ── Ethics gate ──────────────────────────────────────────────
-BLOCKED_INTENTS = {
-    "solve_entire_problem",
-    "write_complete_solution",
-    "optimize_full_submission",
-    "generate_answer",
-}
+BLOCKED_INTENTS = {"solve_entire_problem", "write_complete_solution", "optimize_full_submission", "generate_answer"}
 
 def analyze_prompt_intent(prompt: str) -> str:
-    prompt_lower = prompt.lower()
-    if any(p in prompt_lower for p in [
-        "solve this", "complete solution", "write the code",
-        "give me the answer", "full implementation",
-    ]):
+    p = prompt.lower()
+    if any(x in p for x in ["solve this", "complete solution", "write the code", "give me the answer", "full implementation"]):
         return "solve_entire_problem"
-    if any(p in prompt_lower for p in [
-        "syntax for", "how do i", "what's the api",
-        "import statement", "function signature",
-    ]):
+    if any(x in p for x in ["syntax for", "how do i", "what's the api", "import statement", "function signature"]):
         return "syntax_lookup"
-    if any(p in prompt_lower for p in ["explain", "how does", "what is", "when should"]):
+    if any(x in p for x in ["explain", "how does", "what is", "when should"]):
         return "conceptual_question"
     return "unknown"
 
@@ -177,66 +228,43 @@ def health_check():
 # ── Routes: auth ─────────────────────────────────────────────
 @app.post("/auth/register", response_model=AuthToken)
 async def register(body: RegisterRequest):
-    # Check if email already exists
     existing = supabase.table("profiles").select("id").eq("email", body.email).execute()
     if existing.data:
         raise HTTPException(status_code=400, detail="Email already registered")
-
-    # Create auth user via Supabase Auth (server-side)
     try:
         auth_res = supabase.auth.admin.create_user({
-            "email": body.email,
-            "password": body.password,
-            "email_confirm": True,
+            "email": body.email, "password": body.password, "email_confirm": True,
             "user_metadata": {"name": body.name, "role": body.role},
         })
         user_id = auth_res.user.id
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Registration failed: {str(e)}")
-
-    # The DB trigger (handle_new_user) auto-creates the profile row,
-    # but let's make sure we can read it back
     profile = supabase.table("profiles").select("*").eq("id", user_id).execute()
     if not profile.data:
-        # Fallback: insert manually if trigger didn't fire
-        supabase.table("profiles").insert({
-            "id": user_id,
-            "email": body.email,
-            "name": body.name,
-            "role": body.role,
-        }).execute()
-
+        supabase.table("profiles").insert({"id": user_id, "email": body.email, "name": body.name, "role": body.role}).execute()
     token = create_access_token(
         data={"sub": body.email, "role": body.role, "name": body.name, "uid": str(user_id)},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-    user = User(id=str(user_id), email=body.email, name=body.name, role=body.role)
-    return AuthToken(access_token=token, token_type="bearer", user=user)
+    return AuthToken(access_token=token, token_type="bearer", user=User(id=str(user_id), email=body.email, name=body.name, role=body.role))
 
 @app.post("/auth/login", response_model=AuthToken)
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    """Login with email + password via Supabase Auth"""
     try:
-        auth_res = supabase.auth.sign_in_with_password({
-            "email": form_data.username,
-            "password": form_data.password,
-        })
+        auth_res = supabase.auth.sign_in_with_password({"email": form_data.username, "password": form_data.password})
         sb_user = auth_res.user
-    except Exception:
+    except Exception as e:
+        print(f"[LOGIN ERROR] email={form_data.username} error={e}")
         raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    # Fetch profile
     profile = supabase.table("profiles").select("*").eq("id", sb_user.id).execute()
     if not profile.data:
         raise HTTPException(status_code=401, detail="Profile not found")
-
     p = profile.data[0]
     token = create_access_token(
         data={"sub": p["email"], "role": p["role"], "name": p["name"], "uid": str(p["id"])},
         expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-    user = User(id=str(p["id"]), email=p["email"], name=p["name"], role=p["role"])
-    return AuthToken(access_token=token, token_type="bearer", user=user)
+    return AuthToken(access_token=token, token_type="bearer", user=User(id=str(p["id"]), email=p["email"], name=p["name"], role=p["role"]))
 
 @app.get("/auth/me", response_model=User)
 async def me(current_user: User = Depends(get_current_user)):
@@ -246,60 +274,40 @@ async def me(current_user: User = Depends(get_current_user)):
 @app.post("/challenges", response_model=Challenge)
 async def create_challenge(challenge: Challenge, current_user: User = Depends(get_current_user)):
     row = {
-        "interviewer_id": current_user.id,
-        "title": challenge.title,
-        "description": challenge.description,
-        "difficulty": challenge.difficulty,
-        "starter_code": challenge.starter_code,
-        "language": challenge.language or "python",
-        "assistance_level": challenge.assistance_level or 1,
+        "interviewer_id": current_user.id, "title": challenge.title, "description": challenge.description,
+        "difficulty": challenge.difficulty, "starter_code": challenge.starter_code,
+        "language": challenge.language or "python", "assistance_level": challenge.assistance_level or 1,
     }
     res = supabase.table("challenges").insert(row).execute()
     if not res.data:
         raise HTTPException(status_code=500, detail="Failed to create challenge")
     d = res.data[0]
-    return Challenge(
-        id=str(d["id"]), title=d["title"], description=d["description"],
+    return Challenge(id=str(d["id"]), title=d["title"], description=d["description"],
         difficulty=d["difficulty"], assistance_level=d["assistance_level"],
-        starter_code=d.get("starter_code"), language=d.get("language"),
-        created_by=str(d["interviewer_id"]),
-    )
+        starter_code=d.get("starter_code"), language=d.get("language"), created_by=str(d["interviewer_id"]))
 
 @app.get("/challenges", response_model=List[Challenge])
 async def list_challenges(current_user: User = Depends(get_current_user)):
     res = supabase.table("challenges").select("*").eq("interviewer_id", current_user.id).eq("is_archived", False).execute()
-    return [
-        Challenge(
-            id=str(d["id"]), title=d["title"], description=d["description"],
-            difficulty=d["difficulty"], assistance_level=d["assistance_level"],
-            starter_code=d.get("starter_code"), language=d.get("language"),
-            created_by=str(d["interviewer_id"]),
-        )
-        for d in (res.data or [])
-    ]
+    return [Challenge(id=str(d["id"]), title=d["title"], description=d["description"],
+        difficulty=d["difficulty"], assistance_level=d["assistance_level"],
+        starter_code=d.get("starter_code"), language=d.get("language"), created_by=str(d["interviewer_id"]))
+        for d in (res.data or [])]
 
 # ── Routes: sessions ────────────────────────────────────────
 @app.post("/sessions", response_model=Session)
 async def create_session(session: Session, current_user: User = Depends(get_current_user)):
-    row = {
-        "challenge_id": session.challenge_id,
-        "interviewer_id": current_user.id,
-        "candidate_id": session.candidate_id,
-        "assistance_level": session.assistance_level or 1,
-        "max_prompts": session.max_prompts or 20,
-        "status": "pending",
-    }
+    row = {"challenge_id": session.challenge_id, "interviewer_id": current_user.id,
+        "candidate_id": session.candidate_id, "assistance_level": session.assistance_level or 1,
+        "max_prompts": session.max_prompts or 20, "status": "pending"}
     res = supabase.table("interview_sessions").insert(row).execute()
     if not res.data:
         raise HTTPException(status_code=500, detail="Failed to create session")
     d = res.data[0]
-    return Session(
-        id=str(d["id"]), challenge_id=str(d["challenge_id"]) if d.get("challenge_id") else None,
+    return Session(id=str(d["id"]), challenge_id=str(d["challenge_id"]) if d.get("challenge_id") else None,
         candidate_id=str(d["candidate_id"]) if d.get("candidate_id") else None,
         interviewer_id=str(d["interviewer_id"]), status=d["status"],
-        assistance_level=d["assistance_level"], max_prompts=d["max_prompts"],
-        started_at=d.get("started_at"),
-    )
+        assistance_level=d["assistance_level"], max_prompts=d["max_prompts"], started_at=d.get("started_at"))
 
 @app.get("/sessions/{session_id}", response_model=Session)
 async def get_session(session_id: str, current_user: User = Depends(get_current_user)):
@@ -307,71 +315,144 @@ async def get_session(session_id: str, current_user: User = Depends(get_current_
     if not res.data:
         raise HTTPException(status_code=404, detail="Session not found")
     d = res.data[0]
-    return Session(
-        id=str(d["id"]), challenge_id=str(d["challenge_id"]) if d.get("challenge_id") else None,
+    return Session(id=str(d["id"]), challenge_id=str(d["challenge_id"]) if d.get("challenge_id") else None,
         candidate_id=str(d["candidate_id"]) if d.get("candidate_id") else None,
         interviewer_id=str(d["interviewer_id"]), status=d["status"],
-        assistance_level=d["assistance_level"], max_prompts=d["max_prompts"],
-        started_at=d.get("started_at"),
-    )
+        assistance_level=d["assistance_level"], max_prompts=d["max_prompts"], started_at=d.get("started_at"))
+
+@app.post("/sessions/{session_id}/start")
+async def start_session(session_id: str, current_user: User = Depends(get_current_user)):
+    res = supabase.table("interview_sessions").select("*").eq("id", session_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    d = res.data[0]
+    candidate_id = str(d["candidate_id"]) if d.get("candidate_id") else current_user.id
+    supabase.table("interview_sessions").update({
+        "status": "active", "started_at": datetime.utcnow().isoformat(),
+    }).eq("id", session_id).execute()
+    stream_port = start_proctor(session_id, candidate_id)
+    return {"status": "active", "session_id": session_id, "proctor": "started", "stream_port": stream_port}
+
+@app.post("/sessions/{session_id}/stop")
+async def stop_session(session_id: str, current_user: User = Depends(get_current_user)):
+    stop_proctor(session_id)
+    supabase.table("interview_sessions").update({
+        "status": "completed", "ended_at": datetime.utcnow().isoformat(),
+    }).eq("id", session_id).execute()
+    return {"status": "completed", "session_id": session_id, "proctor": "stopped"}
+
+@app.get("/sessions/{session_id}/proctor-status")
+async def proctor_status(session_id: str, current_user: User = Depends(get_current_user)):
+    entry = _proctor_processes.get(session_id)
+    if entry:
+        proc, port = entry
+        running = proc.poll() is None
+    else:
+        running = False
+        port = None
+    return {"session_id": session_id, "proctor_running": running,
+        "stream_port": port if running else None}
+
+@app.get("/sessions/{session_id}/proctor-events")
+async def get_proctor_events(session_id: str, current_user: User = Depends(get_current_user)):
+    res = supabase.table("proctor_events").select("*").eq("session_id", session_id).order("occurred_at").execute()
+    return res.data or []
+
+@app.get("/sessions/{session_id}/stream")
+async def proxy_proctor_stream(session_id: str):
+    """Proxy the MJPEG stream from the proctor subprocess."""
+    entry = _proctor_processes.get(session_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail="No proctor running")
+    proc, port = entry
+    if proc.poll() is not None:
+        raise HTTPException(status_code=404, detail="Proctor stopped")
+    async def generate():
+        async with httpx.AsyncClient() as client:
+            async with client.stream("GET", f"http://localhost:{port}/stream", timeout=None) as resp:
+                async for chunk in resp.aiter_bytes(chunk_size=4096):
+                    yield chunk
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
 
 # ── Routes: AI prompt + ethics gate ──────────────────────────
 @app.post("/ai/prompt", response_model=AIPromptResponse)
 async def process_ai_prompt(request: AIPromptRequest, current_user: User = Depends(get_current_user)):
     try:
-        # Fetch session to get assistance level
         sess_res = supabase.table("interview_sessions").select("assistance_level").eq("id", request.session_id).execute()
         assistance_level = sess_res.data[0]["assistance_level"] if sess_res.data else 1
-
         gate_result = ethics_logic_gate(request.prompt, assistance_level)
-
         intent = gate_result.get("intent", "unknown")
         was_blocked = not gate_result["allowed"]
         violation = gate_result.get("violation")
         response_text = ""
-
         if gate_result["allowed"]:
-            # TODO: call OpenAI here
             response_text = f"Mock AI response for: {request.prompt}"
-
-        # Log to prompt_logs
         supabase.table("prompt_logs").insert({
-            "session_id": request.session_id,
-            "candidate_id": current_user.id,
-            "prompt_text": request.prompt,
-            "response_text": response_text or None,
-            "intent": intent,
-            "was_blocked": was_blocked,
-            "violation_reason": violation,
+            "session_id": request.session_id, "candidate_id": current_user.id,
+            "prompt_text": request.prompt, "response_text": response_text or None,
+            "intent": intent, "was_blocked": was_blocked, "violation_reason": violation,
         }).execute()
-
         return AIPromptResponse(response=response_text, allowed=not was_blocked, violation=violation)
-
     except PolicyViolation as e:
-        # Log blocked attempt
         supabase.table("prompt_logs").insert({
-            "session_id": request.session_id,
-            "candidate_id": current_user.id,
-            "prompt_text": request.prompt,
-            "response_text": None,
-            "intent": "solve_entire_problem",
-            "was_blocked": True,
-            "violation_reason": str(e),
+            "session_id": request.session_id, "candidate_id": current_user.id,
+            "prompt_text": request.prompt, "response_text": None,
+            "intent": "solve_entire_problem", "was_blocked": True, "violation_reason": str(e),
         }).execute()
         return AIPromptResponse(response="", allowed=False, violation=str(e))
 
 @app.get("/sessions/{session_id}/prompts")
 async def get_session_prompts(session_id: str, current_user: User = Depends(get_current_user)):
-    res = (
-        supabase.table("prompt_logs")
-        .select("*")
-        .eq("session_id", session_id)
-        .order("created_at")
-        .execute()
-    )
+    res = supabase.table("prompt_logs").select("*").eq("session_id", session_id).order("created_at").execute()
     return res.data or []
 
+# ── Routes: code execution ───────────────────────────────────
+CODE_TIMEOUT = 10
+
+@app.post("/code/run", response_model=CodeRunResponse)
+async def run_code(req: CodeRunRequest, current_user: User = Depends(get_current_user)):
+    tmpdir = tempfile.mkdtemp(prefix="ip_code_")
+    try:
+        if req.language == "python":
+            fp = os.path.join(tmpdir, "solution.py")
+            with open(fp, "w") as f: f.write(req.code)
+            cmd = ["python3", fp]
+        elif req.language == "javascript":
+            fp = os.path.join(tmpdir, "solution.js")
+            with open(fp, "w") as f: f.write(req.code)
+            cmd = ["node", fp]
+        elif req.language == "cpp":
+            fp = os.path.join(tmpdir, "solution.cpp")
+            out = os.path.join(tmpdir, "solution")
+            with open(fp, "w") as f: f.write(req.code)
+            cp = subprocess.run(["g++", "-o", out, fp, "-std=c++17"], capture_output=True, text=True, timeout=CODE_TIMEOUT)
+            if cp.returncode != 0:
+                return CodeRunResponse(stdout="", stderr=cp.stderr, exit_code=cp.returncode, timed_out=False)
+            cmd = [out]
+        elif req.language == "java":
+            fp = os.path.join(tmpdir, "Solution.java")
+            with open(fp, "w") as f: f.write(req.code)
+            cp = subprocess.run(["javac", fp], capture_output=True, text=True, timeout=CODE_TIMEOUT)
+            if cp.returncode != 0:
+                return CodeRunResponse(stdout="", stderr=cp.stderr, exit_code=cp.returncode, timed_out=False)
+            cmd = ["java", "-cp", tmpdir, "Solution"]
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported language: {req.language}")
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=CODE_TIMEOUT, input=req.stdin or "")
+            return CodeRunResponse(stdout=proc.stdout[:5000], stderr=proc.stderr[:5000], exit_code=proc.returncode, timed_out=False)
+        except subprocess.TimeoutExpired:
+            return CodeRunResponse(stdout="", stderr="Execution timed out (10s limit)", exit_code=-1, timed_out=True)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
 # ── Entrypoint ───────────────────────────────────────────────
+@app.on_event("shutdown")
+def cleanup_proctors():
+    for sid in list(_proctor_processes.keys()):
+        stop_proctor(sid)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

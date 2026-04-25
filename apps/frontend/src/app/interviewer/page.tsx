@@ -1,16 +1,57 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useRequireAuth } from '@/hooks/useRequireAuth'
+import { api } from '@/lib/api'
+import Button from '@/components/ui/Button'
 
-const stats = [
-  { label: 'Active Sessions', value: '0' },
-  { label: 'Challenges', value: '0' },
-  { label: 'Completed', value: '0' },
-]
+type Challenge = {
+  id: string
+  title: string
+  description: string
+  difficulty: string
+  assistance_level: number
+}
+
+type Session = {
+  id: string
+  challenge_id: string | null
+  candidate_id: string | null
+  interviewer_id: string
+  status: string
+  started_at: string | null
+}
 
 export default function InterviewerDashboard() {
   const { user, isLoading } = useRequireAuth('interviewer')
+  const router = useRouter()
+  const [challenges, setChallenges] = useState<Challenge[]>([])
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [creating, setCreating] = useState(false)
+  const [selectedChallenge, setSelectedChallenge] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!user) return
+    api.get('/challenges').then(r => setChallenges(r.data)).catch(() => {})
+  }, [user])
+
+  const createSession = async (challengeId?: string) => {
+    setCreating(true)
+    try {
+      const { data } = await api.post('/sessions', {
+        interviewer_id: user!.id,
+        challenge_id: challengeId || null,
+        assistance_level: 1,
+      })
+      router.push(`/interviewer/session/${data.id}`)
+    } catch (e) {
+      console.error('Failed to create session', e)
+    } finally {
+      setCreating(false)
+    }
+  }
 
   if (isLoading || !user) {
     return (
@@ -32,17 +73,26 @@ export default function InterviewerDashboard() {
               Welcome, {user.name.split(' ')[0]}
             </h1>
           </div>
-          <Link
-            href="/interviewer/create-challenge"
-            className="bg-black text-white px-5 py-2.5 text-sm font-medium hover:bg-gray-800 transition-colors"
-          >
-            + New Challenge
-          </Link>
+          <div className="flex gap-3">
+            <Button onClick={() => createSession()} loading={creating}>
+              + Quick Session
+            </Button>
+            <Link
+              href="/interviewer/create-challenge"
+              className="bg-white text-black border-2 border-black px-5 py-2.5 text-sm font-medium hover:bg-gray-50 transition-colors"
+            >
+              + New Challenge
+            </Link>
+          </div>
         </div>
 
         {/* Stats */}
         <div className="grid md:grid-cols-3 gap-px bg-gray-200 mb-12">
-          {stats.map(s => (
+          {[
+            { label: 'Challenges', value: challenges.length },
+            { label: 'Active Sessions', value: sessions.filter(s => s.status === 'active').length },
+            { label: 'Completed', value: sessions.filter(s => s.status === 'completed').length },
+          ].map(s => (
             <div key={s.label} className="bg-white px-8 py-8 relative">
               <span className="absolute top-[-1px] left-[-1px] text-gray-200 text-xs select-none">+</span>
               <span className="absolute top-[-1px] right-[-1px] text-gray-200 text-xs select-none">+</span>
@@ -53,22 +103,45 @@ export default function InterviewerDashboard() {
         </div>
 
         {/* Challenges */}
-        <div>
+        <div className="mb-12">
           <p className="text-xs uppercase tracking-widest text-gray-400 mb-6">Your Challenges</p>
           <div className="border border-gray-200 relative">
             <span className="absolute top-[-1px] left-[-1px] text-gray-300 text-xs">+</span>
             <span className="absolute top-[-1px] right-[-1px] text-gray-300 text-xs">+</span>
             <span className="absolute bottom-[-1px] left-[-1px] text-gray-300 text-xs">+</span>
             <span className="absolute bottom-[-1px] right-[-1px] text-gray-300 text-xs">+</span>
-            <div className="px-8 py-16 text-center">
-              <p className="text-gray-400 text-sm mb-4">No challenges yet</p>
-              <Link
-                href="/interviewer/create-challenge"
-                className="text-sm underline underline-offset-4 text-black hover:text-gray-600 transition-colors"
-              >
-                Create your first challenge →
-              </Link>
-            </div>
+
+            {challenges.length === 0 ? (
+              <div className="px-8 py-16 text-center">
+                <p className="text-gray-400 text-sm mb-4">No challenges yet</p>
+                <Link
+                  href="/interviewer/create-challenge"
+                  className="text-sm underline underline-offset-4 text-black hover:text-gray-600"
+                >
+                  Create your first challenge →
+                </Link>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {challenges.map(c => (
+                  <div key={c.id} className="px-6 py-5 flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-sm">{c.title}</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {c.difficulty} · Level {c.assistance_level}
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      onClick={() => createSession(c.id)}
+                      loading={creating}
+                    >
+                      Start Session
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 

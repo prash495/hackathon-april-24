@@ -4,14 +4,15 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useRequireAuth } from '@/hooks/useRequireAuth'
+import { api } from '@/lib/api'
 import Button from '@/components/ui/Button'
 import Input from '@/components/ui/Input'
 
 const LEVELS = [
-  { value: 'no_ai',            label: 'Level 0', name: 'No AI',       desc: 'Traditional whiteboard' },
-  { value: 'syntax_only',      label: 'Level 1', name: 'Syntax Only', desc: 'Language references only' },
-  { value: 'conceptual_hints', label: 'Level 2', name: 'Conceptual',  desc: 'Algorithm hints allowed' },
-  { value: 'pair_programming', label: 'Level 3', name: 'Pair Mode',   desc: 'Small snippets, no solutions' },
+  { value: 0, label: 'Level 0', name: 'No AI',       desc: 'Traditional whiteboard' },
+  { value: 1, label: 'Level 1', name: 'Syntax Only', desc: 'Language references only' },
+  { value: 2, label: 'Level 2', name: 'Conceptual',  desc: 'Algorithm hints allowed' },
+  { value: 3, label: 'Level 3', name: 'Pair Mode',   desc: 'Small snippets, no solutions' },
 ]
 
 const DIFFICULTIES = ['easy', 'medium', 'hard'] as const
@@ -24,13 +25,13 @@ export default function CreateChallenge() {
     title: '',
     description: '',
     difficulty: 'medium' as typeof DIFFICULTIES[number],
-    assistance_level: 'syntax_only',
+    assistance_level: 1 as number,
     starter_code: '',
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [submitting, setSubmitting] = useState(false)
 
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+  const set = (k: string, v: string | number) => setForm(f => ({ ...f, [k]: v }))
 
   const validate = () => {
     const e: Record<string, string> = {}
@@ -45,11 +46,7 @@ export default function CreateChallenge() {
     if (!validate()) return
     setSubmitting(true)
     try {
-      await fetch('http://localhost:8000/challenges', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
-      })
+      await api.post('/challenges', form)
       router.push('/interviewer')
     } catch {
       setErrors({ submit: 'Failed to create challenge. Please try again.' })
