@@ -42,7 +42,7 @@ export async function fetchMe(): Promise<User> {
 
 // ─── Token storage ────────────────────────────────────────────
 // Store in both:
-//   • localStorage  → read by axios interceptor (client-side API calls)
+//   • sessionStorage  → read by axios interceptor (client-side API calls)
 //   • document.cookie → read by Next.js middleware (SSR route protection)
 
 const TOKEN_KEY = 'access_token'
@@ -50,9 +50,9 @@ const USER_KEY  = 'ip_user'
 
 export function saveAuth(data: AuthResponse): void {
   if (typeof window === 'undefined') return
-  // localStorage for axios
-  localStorage.setItem(TOKEN_KEY, data.access_token)
-  localStorage.setItem(USER_KEY, JSON.stringify(data.user))
+  // sessionStorage for axios
+  sessionStorage.setItem(TOKEN_KEY, data.access_token)
+  sessionStorage.setItem(USER_KEY, JSON.stringify(data.user))
   // Cookie for middleware — SameSite=Strict, no httpOnly so JS can clear it
   const maxAge = 60 * 60 * 8 // 8 hours
   document.cookie = `${TOKEN_KEY}=${data.access_token}; path=/; max-age=${maxAge}; SameSite=Strict`
@@ -60,21 +60,21 @@ export function saveAuth(data: AuthResponse): void {
 
 export function clearAuth(): void {
   if (typeof window === 'undefined') return
-  localStorage.removeItem(TOKEN_KEY)
-  localStorage.removeItem(USER_KEY)
+  sessionStorage.removeItem(TOKEN_KEY)
+  sessionStorage.removeItem(USER_KEY)
   // Expire the cookie
   document.cookie = `${TOKEN_KEY}=; path=/; max-age=0; SameSite=Strict`
 }
 
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null
-  return localStorage.getItem(TOKEN_KEY)
+  return sessionStorage.getItem(TOKEN_KEY)
 }
 
 export function getStoredUser(): User | null {
   if (typeof window === 'undefined') return null
   try {
-    const raw = localStorage.getItem(USER_KEY)
+    const raw = sessionStorage.getItem(USER_KEY)
     return raw ? (JSON.parse(raw) as User) : null
   } catch {
     return null
