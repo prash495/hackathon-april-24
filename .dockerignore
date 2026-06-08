@@ -1,0 +1,30 @@
+# Node
+node_modules/
+**/node_modules/
+npm-debug.log*
+
+# Python envs / caches
+.venv/
+venv/
+**/venv/
+**/.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Frontend build output
+apps/frontend/.next/
+apps/frontend/out/
+
+# Local env files (set these in the Railway dashboard instead)
+.env
+**/.env
+*.local
+
+# Git / IDE / misc
+.git/
+.idea/
+.vscode/
+*.swp
+*.log
+waht.pdf

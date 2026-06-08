@@ -17,4 +17,7 @@ RUN if [ ! -f mediapipe-core/face_landmarker_v2_with_blendshapes.task ]; then \
     fi
 
 EXPOSE 8002
-CMD ["uvicorn", "mediapipe-core.proctor:app", "--host", "0.0.0.0", "--port", "8002"]
+# Use shell form so ${PORT} (injected by Railway) expands; fall back to 8002 locally.
+# --app-dir puts mediapipe-core on sys.path so "proctor" imports cleanly
+# (the folder name "mediapipe-core" is not a valid Python module name).
+CMD uvicorn proctor:app --app-dir mediapipe-core --host 0.0.0.0 --port ${PORT:-8002}
